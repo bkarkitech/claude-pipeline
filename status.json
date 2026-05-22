@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-22T06:55:16Z",
+  "generated_at": "2026-05-22T07:33:56Z",
   "watcher": {
     "running": true,
     "pid": 19211
@@ -9,7 +9,7 @@
     "active": 0,
     "pending": 0,
     "done": 1,
-    "failed": 6
+    "failed": 7
   },
   "active_tasks": [],
   "queued_tasks": [],
@@ -61,6 +61,13 @@
   {
     "name": "010-implement-rate-limiting-on-cafe-aapama-backend-api",
     "title": "Implement Rate Limiting on Cafe-Aapama Backend API Endpoints",
+    "reason": "unknown",
+    "resumable": true,
+    "attempts": 1
+  },
+  {
+    "name": "011-research-skykeep-project",
+    "title": "Research skykeep project",
     "reason": "unknown",
     "resumable": true,
     "attempts": 1

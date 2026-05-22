@@ -531,13 +531,29 @@ function updateDashboard(data) {
 
 async function fetchStatus() {
     try {
-        const res = await fetch('/status.json?' + Date.now());
+        const res = await fetch('status.json?' + Date.now());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+
+        // Warn if status.json is stale (older than 30s)
+        const banner = document.getElementById('error-banner');
+        if (data.generated_at) {
+            const age = (Date.now() - new Date(data.generated_at).getTime()) / 1000;
+            if (age > 30) {
+                const mins = Math.floor(age / 60);
+                const secs = Math.floor(age % 60);
+                const ageStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                banner.textContent = `⚠️ Status data is ${ageStr} old — pipeline may not be running locally. Showing last known state.`;
+                banner.style.display = 'block';
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
         updateDashboard(data);
     } catch (err) {
         const banner = document.getElementById('error-banner');
-        banner.textContent = `Failed to fetch status: ${err.message}. Is the server running?`;
+        banner.textContent = `Failed to fetch status: ${err.message}. Is the pipeline server running?`;
         banner.style.display = 'block';
     }
 }

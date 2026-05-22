@@ -909,6 +909,12 @@ flowchart TB
     subgraph QUEUE_LAYER["Task Queue Layer"]
         QUEUE["queue/\n(auto-pickup)"]
         PENDING["pending/\n(manual kick)"]
+        DEPS["Dependency Resolver\n(depends_on / blocks)"]
+    end
+
+    subgraph SCHEDULING["Scheduling Layer"]
+        CRON["Cron Matcher\n(5-field expressions)"]
+        SCHED_STATE["Schedule State\n(.schedules/)"]
     end
 
     subgraph DETECTION["Detection Layer"]
@@ -921,12 +927,14 @@ flowchart TB
         LOCK["Lock Manager\n(noclobber atomic)"]
         SESSION["Session Manager\n(UUID tracking)"]
         CONFIG["config.yml"]
+        DEP_CHECK["Dependency Gate\n(blocks until ready)"]
     end
 
     subgraph CHECKPOINT["Checkpoint Layer"]
         STATE["state/\n(current.json)"]
         GITSNAP["Git Snapshots"]
         ATTEMPTS["Attempt History\n(attempts.jsonl)"]
+        COST["Cost Tracking\n(pipeline cost)"]
     end
 
     subgraph CLAUDE_LAYER["Claude Code"]
@@ -939,7 +947,13 @@ flowchart TB
         DONE["done/"]
         FAILED["failed/\n(resumable)"]
         LOGS["logs/"]
-        NOTIFY["Desktop Notification"]
+    end
+
+    subgraph NOTIFICATIONS["Notification System"]
+        DESKTOP["Desktop\n(osascript)"]
+        TELEGRAM["Telegram Bot\n(Bot API)"]
+        EMAIL["Email\n(sendmail/SMTP)"]
+        WEBHOOK["Webhook\n(POST JSON)"]
     end
 
     %% Flow
@@ -952,13 +966,24 @@ flowchart TB
     DIRECT --> QUEUE
     CLI -->|"--no-auto"| PENDING
 
-    QUEUE --> WATCHMAN
+    %% Scheduling
+    PENDING --> CRON
+    CRON --> SCHED_STATE
+    CRON -->|"schedule matches"| QUEUE
+
+    %% Dependencies
+    QUEUE --> DEPS
+    DEPS -->|"deps satisfied"| WATCHMAN
+    DEPS -->|"deps pending"| PENDING
+
     WATCHMAN --> DISPATCHER
     LAUNCHD --> WATCHMAN
 
     DISPATCHER --> LOCK
     DISPATCHER --> SESSION
     DISPATCHER --> CONFIG
+    DISPATCHER --> DEP_CHECK
+    DEP_CHECK -->|"all deps done"| SESSION
     SESSION --> STATE
 
     STATE --> FRESH
@@ -970,22 +995,29 @@ flowchart TB
     RESUME --> FAILED
 
     FAILED -->|"pipeline resume"| QUEUE
-    DONE --> NOTIFY
-    FAILED --> NOTIFY
+    DONE --> DESKTOP
+    DONE --> TELEGRAM
+    DONE --> EMAIL
+    DONE --> WEBHOOK
+    FAILED --> DESKTOP
+    FAILED --> TELEGRAM
 
     DISPATCHER --> GITSNAP
     DISPATCHER --> ATTEMPTS
     DISPATCHER --> LOGS
+    DISPATCHER --> COST
 
     %% Styling
     style USER fill:#1a2332,stroke:#30363d,color:#e6edf3
     style AI_GEN fill:#1a2332,stroke:#3fb950,color:#e6edf3
     style QUEUE_LAYER fill:#1a2332,stroke:#30363d,color:#e6edf3
+    style SCHEDULING fill:#1a2332,stroke:#d29922,color:#e6edf3
     style DETECTION fill:#1a2332,stroke:#30363d,color:#e6edf3
     style EXECUTION fill:#1a2332,stroke:#30363d,color:#e6edf3
     style CHECKPOINT fill:#1a2332,stroke:#bc8cff,color:#e6edf3
     style CLAUDE_LAYER fill:#1a2332,stroke:#58a6ff,color:#e6edf3
     style RESULTS fill:#1a2332,stroke:#30363d,color:#e6edf3
+    style NOTIFICATIONS fill:#1a2332,stroke:#f97583,color:#e6edf3
         </pre>
     </div>
 

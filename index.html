@@ -1485,13 +1485,13 @@ real-time notification system.
             <h4>Level 5: Full-Stack Dashboard & Telegram Bot &#10003;</h4>
             <p>Web dashboard with live SSE streaming, task CRUD, service control. Two-way Telegram bot (submit tasks, /status, /help). API server on port 7778. launchd management via CLI (pipeline up/down/install). flock-based race-free dispatch. Stale task sweep.</p>
         </div>
-        <div class="roadmap-item next">
-            <h4>Level 6: Multi-Agent & Advanced Integrations (Next)</h4>
-            <p>Agent-to-agent communication (one task spawns sub-tasks), priority queue ordering, task chaining (output of one feeds into next), Slack/Discord integration bots, approval workflows.</p>
+        <div class="roadmap-item done">
+            <h4>Level 6: Multi-Agent & Advanced Integrations &#10003;</h4>
+            <p>Agent-to-agent communication (sub-task spawning with pipeline-spawn), priority queue ordering (frontmatter-based), task chaining (output of one feeds into next via input_from/chain), Slack/Discord integration bots with bidirectional commands.</p>
         </div>
-        <div class="roadmap-item future">
-            <h4>Level 7: Platform</h4>
-            <p>Mobile task creation (via file sync), multi-machine coordination, plugin system for new task types, team features, remote agent execution.</p>
+        <div class="roadmap-item done">
+            <h4>Level 7: Platform &#10003;</h4>
+            <p>Mobile task creation (simplified API + file sync), multi-machine coordination (peer-to-peer cluster with machine tags), plugin system (replace/pre/post/wrap modes), approval workflows (require sign-off before execution), team features (token auth, assignment, visibility).</p>
         </div>
     </div>
 </section>

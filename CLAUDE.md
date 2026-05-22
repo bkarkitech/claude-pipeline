@@ -82,3 +82,40 @@ If your prompt begins with "# Original Task" and includes a "# Previous Progress
 - Read the git state and log output provided to understand progress.
 - Do NOT start over — pick up from where the previous execution stopped.
 - If the git state shows commits on a branch, check out that branch and continue.
+
+## Spawning Sub-Tasks
+
+You can break complex work into sub-tasks that run independently and in parallel:
+
+```bash
+pipeline-spawn "Implement auth module" --repo skykeep --priority 7
+pipeline-spawn "Write tests for auth" --repo skykeep --depends-on "implement-auth-module"
+pipeline-spawn "Update documentation" --type writing --priority 3
+```
+
+Sub-tasks:
+- Automatically inherit your task as their parent
+- Run independently in the pipeline queue
+- Can specify their own repo, priority, type, model, and dependencies
+- If your task has `wait_for_subtasks: true` in frontmatter, you'll be resumed after all children complete
+
+Use sub-tasks when:
+- Work can be parallelized (e.g., implement + test + document simultaneously)
+- Different parts need different repos or models
+- You want to delegate a simpler piece to a cheaper model
+
+## Task Chaining
+
+If your task received input from a previous task, it will appear at the top of your prompt under:
+```
+## Input from previous task: <task-name>
+```
+
+Use this context to inform your work. The previous task's output feeds directly into yours.
+
+## Available Pipeline Commands
+
+- `pipeline-spawn "description" [flags]` — Create a sub-task
+- `pipeline add "description" --dumb` — Create a regular task (not a sub-task)
+- `pipeline list queue` — See what's in the queue
+- `pipeline status` — Check pipeline status

@@ -89,6 +89,87 @@ def get_repos():
     return repos
 
 
+def get_team_config():
+    """Parse team section from config.yml."""
+    team = {"enabled": False, "members": [], "tokens": {}}
+    in_team = False
+    in_members = False
+    in_tokens = False
+    current_member = {}
+    current_token = {}
+
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped == "team:":
+                    in_team = True
+                    continue
+                if in_team:
+                    if stripped and not line.startswith(" ") and not line.startswith("\t"):
+                        break
+                    if "enabled:" in stripped:
+                        team["enabled"] = "true" in stripped.lower()
+                    elif "name:" in stripped and not in_members:
+                        team["name"] = stripped.split(":", 1)[1].strip().strip('"')
+                    elif stripped == "members:":
+                        in_members = True
+                        in_tokens = False
+                        continue
+                    elif stripped == "tokens:" or stripped == "auth:":
+                        in_members = False
+                        in_tokens = "tokens:" in stripped
+                        continue
+
+                    if in_members:
+                        if stripped.startswith("- name:"):
+                            if current_member:
+                                team["members"].append(current_member)
+                            current_member = {"name": stripped.split(":", 1)[1].strip().strip('"')}
+                        elif "role:" in stripped and current_member:
+                            current_member["role"] = stripped.split(":", 1)[1].strip().strip('"')
+                        elif "machine:" in stripped and current_member:
+                            current_member["machine"] = stripped.split(":", 1)[1].strip().strip('"')
+
+                    if in_tokens:
+                        if "- user:" in stripped:
+                            if current_token:
+                                team["tokens"][current_token.get("token", "")] = current_token.get("user", "")
+                            current_token = {"user": stripped.split(":", 1)[1].strip().strip('"')}
+                        elif "token:" in stripped and current_token:
+                            current_token["token"] = stripped.split(":", 1)[1].strip().strip('"')
+
+            # Flush last items
+            if current_member:
+                team["members"].append(current_member)
+            if current_token and current_token.get("token"):
+                team["tokens"][current_token["token"]] = current_token.get("user", "")
+
+    except FileNotFoundError:
+        pass
+    return team
+
+
+def authenticate_request(handler):
+    """Authenticate a request using Bearer token.
+
+    Returns username if valid, None if auth not configured, or raises error.
+    """
+    team = get_team_config()
+    if not team["enabled"] or not team["tokens"]:
+        return None  # No auth required
+
+    auth_header = handler.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return "__unauthorized__"
+
+    token = auth_header[7:].strip()
+    user = team["tokens"].get(token)
+    if user:
+        return user
+    return "__unauthorized__"
+
+
 def parse_frontmatter(filepath):
     """Parse YAML frontmatter from a markdown file."""
     meta = {}
@@ -501,6 +582,215 @@ Task created from web dashboard.
     }
 
 
+def handle_mobile_create(handler, body):
+    """POST /api/mobile/create — Simplified mobile task creation.
+
+    Accepts minimal input optimized for iOS Shortcuts and mobile apps:
+    {
+        "text": "Fix the login bug in skykeep",
+        "priority": "high"    // high/medium/low/urgent → maps to 8/5/3/10
+    }
+    """
+    text = (body or {}).get("text", "").strip()
+    if not text:
+        return {"error": "text is required"}, 400
+
+    # Map priority words to numbers
+    priority_map = {"urgent": 10, "high": 8, "medium": 5, "low": 3}
+    priority_input = (body or {}).get("priority", "medium")
+    if isinstance(priority_input, str):
+        priority = priority_map.get(priority_input.lower(), 5)
+    else:
+        priority = int(priority_input)
+
+    # Auto-detect type from keywords
+    task_type = "general"
+    text_lower = text.lower()
+    if any(w in text_lower for w in ["fix", "bug", "implement", "add", "refactor", "update", "change"]):
+        task_type = "code"
+    elif any(w in text_lower for w in ["research", "find out", "compare", "what is", "how to"]):
+        task_type = "research"
+    elif any(w in text_lower for w in ["review", "check", "audit", "look at"]):
+        task_type = "review"
+    elif any(w in text_lower for w in ["write", "draft", "document", "describe"]):
+        task_type = "writing"
+
+    # Auto-detect repo from keywords
+    repos = get_repos()
+    repo = ""
+    for name in repos:
+        if name.lower().replace("-", " ") in text_lower or name.lower() in text_lower:
+            repo = name
+            break
+
+    task_id = generate_task_id()
+    slug = slugify(text)
+    filename = f"{task_id}-{slug}.md"
+    filepath = QUEUE_DIR / filename
+
+    # Build task content
+    frontmatter_lines = [
+        "---",
+        f"type: {task_type}",
+        f"priority: {priority}",
+        "auto: true",
+        "model: sonnet",
+        "timeout: 600",
+        "budget: 5.00",
+        "source: mobile",
+    ]
+    if repo:
+        frontmatter_lines.append(f"repo: {repo}")
+    frontmatter_lines.append("---")
+
+    content = "\n".join(frontmatter_lines) + f"\n\n# {text}\n\n{text}\n"
+    filepath.write_text(content)
+
+    send_notification("Pipeline: Mobile Task", f"{filepath.stem} created from mobile", "start")
+
+    # Trigger dispatcher
+    subprocess.Popen(
+        [str(BIN_DIR / "dispatcher.sh")],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+    return {
+        "success": True,
+        "task": filepath.stem,
+        "filename": filename,
+        "type": task_type,
+        "priority": priority,
+        "repo": repo or None,
+    }
+
+
+def handle_task_approve(handler, name, body=None):
+    """POST /api/tasks/<name>/approve — Approve a pending task."""
+    filepath, status = find_task_file(name)
+    if not filepath:
+        return {"error": f"Task '{name}' not found"}, 404
+    if status != "pending":
+        return {"error": f"Can only approve pending tasks (currently: {status})"}, 400
+
+    content = filepath.read_text()
+    # Update approval_status
+    if "approval_status:" in content:
+        content = re.sub(r'^approval_status:.*$', 'approval_status: approved', content, flags=re.MULTILINE)
+    else:
+        content = content.replace("---\n", "---\napproval_status: approved\n", 1)
+
+    # Add approved_by
+    approved_by = (body or {}).get("by", "api")
+    if "approved_by:" in content:
+        content = re.sub(r'^approved_by:.*$', f'approved_by: {approved_by}', content, flags=re.MULTILINE)
+    else:
+        content = content.replace("---\n", f"---\napproved_by: {approved_by}\n", 1)
+
+    # Move to queue
+    dest = QUEUE_DIR / filepath.name
+    dest.write_text(content)
+    filepath.unlink()
+
+    send_notification("Pipeline: Approved", f"{filepath.stem} approved by {approved_by}", "start")
+
+    subprocess.Popen(
+        [str(BIN_DIR / "dispatcher.sh")],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+    return {"success": True, "message": f"Task {filepath.stem} approved and queued"}
+
+
+def handle_task_reject(handler, name, body=None):
+    """POST /api/tasks/<name>/reject — Reject a pending task."""
+    filepath, status = find_task_file(name)
+    if not filepath:
+        return {"error": f"Task '{name}' not found"}, 404
+    if status != "pending":
+        return {"error": f"Can only reject pending tasks (currently: {status})"}, 400
+
+    content = filepath.read_text()
+    if "approval_status:" in content:
+        content = re.sub(r'^approval_status:.*$', 'approval_status: rejected', content, flags=re.MULTILINE)
+    else:
+        content = content.replace("---\n", "---\napproval_status: rejected\n", 1)
+
+    dest = FAILED_DIR / filepath.name
+    dest.write_text(content)
+    filepath.unlink()
+
+    send_notification("Pipeline: Rejected", f"{filepath.stem} rejected", "failure")
+
+    return {"success": True, "message": f"Task {filepath.stem} rejected"}
+
+
+def handle_cluster_status(handler):
+    """GET/POST /api/cluster/status — Return this node's status."""
+    config = read_config()
+    node_id = config.get("node_id", os.uname().nodename)
+
+    # Count tasks in each state
+    counts = {}
+    for name, dirpath in STATUS_DIRS.items():
+        counts[name] = len(list(dirpath.glob("*.md"))) if dirpath.exists() else 0
+
+    # Get active task names
+    active_tasks = []
+    if ACTIVE_DIR.exists():
+        for f in ACTIVE_DIR.glob("*.md"):
+            active_tasks.append(f.stem)
+
+    # Get tasks tagged for other machines (available for peers to pull)
+    available_for_peers = []
+    if QUEUE_DIR.exists():
+        for f in QUEUE_DIR.glob("*.md"):
+            meta = parse_frontmatter(f)
+            machine = meta.get("machine", "any")
+            if machine != "any" and machine != node_id:
+                available_for_peers.append({
+                    "name": f.stem,
+                    "machine": machine,
+                    "priority": int(meta.get("priority", "5")),
+                })
+
+    return {
+        "node_id": node_id,
+        "hostname": os.uname().nodename,
+        "counts": counts,
+        "active_tasks": active_tasks,
+        "available_for_peers": available_for_peers,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def handle_cluster_push(handler, body):
+    """POST /api/cluster/push — Receive a task file from a peer."""
+    if not body:
+        return {"error": "Body required"}, 400
+
+    filename = body.get("filename", "")
+    content = body.get("content", "")
+    source_node = body.get("source_node", "unknown")
+
+    if not filename or not content:
+        return {"error": "filename and content required"}, 400
+
+    filepath = QUEUE_DIR / filename
+    if filepath.exists():
+        return {"error": f"Task {filename} already exists"}, 409
+
+    filepath.write_text(content)
+    send_notification("Pipeline: Cluster", f"Task {filepath.stem} received from {source_node}", "start")
+
+    # Trigger dispatcher
+    subprocess.Popen(
+        [str(BIN_DIR / "dispatcher.sh")],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+    return {"success": True, "message": f"Task {filepath.stem} queued from {source_node}"}
+
+
 def handle_task_action(handler, name, action, body=None):
     """POST /api/tasks/<name>/<action> — Perform action on task."""
     filepath, status = find_task_file(name)
@@ -708,6 +998,52 @@ def handle_config(handler):
     }
 
 
+def handle_exec(handler, body):
+    """POST /api/exec — Run allowlisted pipeline CLI commands."""
+    ALLOWLIST = {"add", "status", "list", "logs", "costs", "help", "run",
+                 "resume", "retry", "up", "down", "install", "state", "view",
+                 "schedule", "deps", "clean", "notify-test"}
+
+    command = (body or {}).get("command", "").strip()
+    if not command:
+        return {"error": "No command provided"}, 400
+
+    # Parse the first word as the subcommand
+    parts = command.split(None, 1)
+    subcmd = parts[0].lstrip("-")
+
+    # Strip "pipeline" prefix if user typed it
+    if subcmd == "pipeline" and len(parts) > 1:
+        parts = parts[1].split(None, 1)
+        subcmd = parts[0].lstrip("-")
+
+    if subcmd not in ALLOWLIST:
+        return {"error": f"Command '{subcmd}' not allowed. Allowed: {', '.join(sorted(ALLOWLIST))}"}, 403
+
+    # Build full command
+    pipeline_bin = str(BIN_DIR / "pipeline")
+    full_cmd = f"{pipeline_bin} {command}"
+    # Strip "pipeline" prefix if user included it
+    if command.startswith("pipeline "):
+        full_cmd = f"{pipeline_bin} {command[9:]}"
+
+    try:
+        result = subprocess.run(
+            full_cmd, shell=True, capture_output=True, text=True,
+            timeout=30, cwd=str(PIPELINE_DIR)
+        )
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Command timed out (30s limit)"}, 408
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
 # ─── Request Handler ─────────────────────────────────────────────────────────
 
 class PipelineHandler(http.server.SimpleHTTPRequestHandler):
@@ -863,6 +1199,48 @@ class PipelineHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json(result)
             return
 
+        # /api/cluster/status
+        if path == "/api/cluster/status":
+            self._send_json(handle_cluster_status(self))
+            return
+
+        # /api/cluster/tasks — Tasks available for peers to pull
+        if path == "/api/cluster/tasks":
+            self._send_json(handle_cluster_status(self).get("available_for_peers", []))
+            return
+
+        # /api/team/members
+        if path == "/api/team/members":
+            team = get_team_config()
+            if not team["enabled"]:
+                self._send_json({"error": "Team features not enabled"}, 400)
+            else:
+                self._send_json({"team": team.get("name", ""), "members": team["members"]})
+            return
+
+        # /api/team/activity — Recent task activity per team member
+        if path == "/api/team/activity":
+            team = get_team_config()
+            activity = {}
+            for member in team.get("members", []):
+                name = member.get("name", "")
+                activity[name] = {"assigned": 0, "completed": 0}
+                # Count tasks assigned to this member
+                for dirpath in [QUEUE_DIR, PENDING_DIR, ACTIVE_DIR]:
+                    if dirpath.exists():
+                        for f in dirpath.glob("*.md"):
+                            meta = parse_frontmatter(f)
+                            if meta.get("assigned_to") == name:
+                                activity[name]["assigned"] += 1
+                # Count completed tasks by this member
+                if DONE_DIR.exists():
+                    for f in DONE_DIR.glob("*.md"):
+                        meta = parse_frontmatter(f)
+                        if meta.get("assigned_to") == name or meta.get("created_by") == name:
+                            activity[name]["completed"] += 1
+            self._send_json({"activity": activity})
+            return
+
         self._send_json({"error": "Not found"}, 404)
 
     def _handle_api_post(self, path):
@@ -872,6 +1250,50 @@ class PipelineHandler(http.server.SimpleHTTPRequestHandler):
         # /api/tasks/create
         if path == "/api/tasks/create":
             result = handle_task_create(self, body)
+            if isinstance(result, tuple):
+                self._send_json(result[0], result[1])
+            else:
+                self._send_json(result)
+            return
+
+        # /api/mobile/create — Simplified mobile task creation
+        if path == "/api/mobile/create":
+            result = handle_mobile_create(self, body)
+            if isinstance(result, tuple):
+                self._send_json(result[0], result[1])
+            else:
+                self._send_json(result)
+            return
+
+        # /api/tasks/<name>/approve
+        match = re.match(r'^/api/tasks/([^/]+)/approve$', path)
+        if match:
+            result = handle_task_approve(self, match.group(1), body)
+            if isinstance(result, tuple):
+                self._send_json(result[0], result[1])
+            else:
+                self._send_json(result)
+            return
+
+        # /api/tasks/<name>/reject
+        match = re.match(r'^/api/tasks/([^/]+)/reject$', path)
+        if match:
+            result = handle_task_reject(self, match.group(1), body)
+            if isinstance(result, tuple):
+                self._send_json(result[0], result[1])
+            else:
+                self._send_json(result)
+            return
+
+        # /api/cluster/status
+        if path == "/api/cluster/status":
+            result = handle_cluster_status(self)
+            self._send_json(result)
+            return
+
+        # /api/cluster/push — Receive a task from a peer
+        if path == "/api/cluster/push":
+            result = handle_cluster_push(self, body)
             if isinstance(result, tuple):
                 self._send_json(result[0], result[1])
             else:
@@ -898,6 +1320,15 @@ class PipelineHandler(http.server.SimpleHTTPRequestHandler):
         if match:
             name, action = match.group(1), match.group(2)
             result = handle_task_action(self, name, action, body)
+            if isinstance(result, tuple):
+                self._send_json(result[0], result[1])
+            else:
+                self._send_json(result)
+            return
+
+        # /api/exec — Run pipeline CLI commands
+        if path == "/api/exec":
+            result = handle_exec(self, body)
             if isinstance(result, tuple):
                 self._send_json(result[0], result[1])
             else:

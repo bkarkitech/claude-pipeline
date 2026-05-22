@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# ~/.claude-pipeline/bin/pipeline-spawn
+# Lightweight sub-task spawner — called BY a running Claude task to create child tasks.
+#
+# Usage:
+#   pipeline-spawn "description" [--repo X] [--priority N] [--type X] [--depends-on X]
+#   pipeline-spawn --file task.md
+#
+# Environment:
+#   PIPELINE_PARENT_TASK — Set by dispatcher when invoking Claude. Identifies the parent.
+#
+# The spawned task will have `parent_task: <parent>` in its frontmatter.
+# If the parent has `wait_for_subtasks: true`, it will be re-queued once all children complete.
+
+set -euo pipefail
+
+PIPELINE_DIR="$HOME/.claude-pipeline"
+QUEUE_DIR="$PIPELINE_DIR/queue"
+STATE_DIR="$PIPELINE_DIR/state"
+CONFIG_FILE="$PIPELINE_DIR/config.yml"
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SPAWN] $*" >> "$PIPELINE_DIR/logs/dispatcher.log"
+}
+
+config_get() {
+    local key="$1"
+    local default="${2:-}"
+    local value
+    value=$(grep -E "^\s*${key}:" "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/^[^:]*:\s*//' | sed 's/\s*#.*//' | xargs)
+    echo "${value:-$default}"
+}
+
+slugify() {
+    echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//' | sed 's/-$//' | head -c 50
+}
+
+generate_task_id() {
+    local max_id=0
+    local dir f num
+    for dir in "$PIPELINE_DIR/queue" "$PIPELINE_DIR/active" "$PIPELINE_DIR/pending" "$PIPELINE_DIR/done" "$PIPELINE_DIR/failed"; do
+        for f in "$dir"/*.md; do
+            [[ -f "$f" ]] || continue
+            num=$(basename "$f" | grep -oE '^[0-9]+' || echo "0")
+            if [[ "$num" -gt "$max_id" ]]; then
+                max_id="$num"
+            fi
+        done
+    done
+    printf "%03d" $((max_id + 1))
+}
+
+# ─── Parse Arguments ──────────────────────────────────────────────────────────
+
+parent="${PIPELINE_PARENT_TASK:-}"
+repo=""
+task_type="general"
+priority="5"
+model=""
+depends_on=""
+desc_parts=()
+from_file=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --repo) repo="$2"; shift 2 ;;
+        --type) task_type="$2"; shift 2 ;;
+        --priority) priority="$2"; shift 2 ;;
+        --model) model="$2"; shift 2 ;;
+        --depends-on) depends_on="$2"; shift 2 ;;
+        --file) from_file="$2"; shift 2 ;;
+        --parent) parent="$2"; shift 2 ;;
+        *) desc_parts+=("$1"); shift ;;
+    esac
+done
+
+# ─── Validate ─────────────────────────────────────────────────────────────────
+
+if [[ -z "$from_file" && ${#desc_parts[@]} -eq 0 ]]; then
+    echo "Usage: pipeline-spawn \"description\" [--repo X] [--priority N] [--type X]"
+    echo "   or: pipeline-spawn --file task.md"
+    exit 1
+fi
+
+# ─── Generate Task File ──────────────────────────────────────────────────────
+
+task_id=$(generate_task_id)
+filename=""
+
+if [[ -n "$from_file" ]]; then
+    # Copy an existing task file to queue with parent_task injected
+    if [[ ! -f "$from_file" ]]; then
+        echo "Error: File not found: $from_file"
+        exit 1
+    fi
+    filename="${task_id}-$(basename "$from_file")"
+    cp "$from_file" "$QUEUE_DIR/$filename"
+    # Inject parent_task into frontmatter
+    if [[ -n "$parent" ]]; then
+        sed -i '' "2a\\
+parent_task: $parent
+" "$QUEUE_DIR/$filename"
+    fi
+    echo "Spawned sub-task: $filename"
+else
+    # Generate task from description
+    description="${desc_parts[*]}"
+    slug=$(slugify "$description")
+    filename="${task_id}-${slug}.md"
+
+    # Default model from config
+    model="${model:-$(config_get 'model' 'sonnet')}"
+
+    # Build task content
+    content="---
+type: $task_type
+priority: $priority
+auto: true
+model: $model
+timeout: $(config_get 'timeout' '600')
+budget: $(config_get 'budget' '5.00')
+source: spawn"
+
+    if [[ -n "$repo" ]]; then
+        content="$content
+repo: $repo"
+    fi
+    if [[ -n "$parent" ]]; then
+        content="$content
+parent_task: $parent"
+    fi
+    if [[ -n "$depends_on" ]]; then
+        content="$content
+depends_on: $depends_on"
+    fi
+
+    content="$content
+---
+
+# $description
+
+$description
+
+Spawned as sub-task of: ${parent:-unknown}
+"
+
+    echo "$content" > "$QUEUE_DIR/$filename"
+    echo "Spawned sub-task: $filename"
+fi
+
+# ─── Register with Parent ─────────────────────────────────────────────────────
+
+if [[ -n "$parent" && -n "$filename" ]]; then
+    child_name=$(basename "$filename" .md)
+    parent_state_dir="$STATE_DIR/$parent"
+    mkdir -p "$parent_state_dir"
+
+    subtasks_file="$parent_state_dir/subtasks.json"
+    if [[ ! -f "$subtasks_file" ]]; then
+        echo "{}" > "$subtasks_file"
+    fi
+
+    # Add child to tracker
+    tmp=$(jq --arg name "$child_name" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '.[$name] = {"status": "pending", "spawned_at": $ts}' "$subtasks_file" 2>/dev/null)
+    if [[ -n "$tmp" ]]; then
+        echo "$tmp" > "$subtasks_file"
+    fi
+
+    log "Spawned sub-task '$child_name' under parent '$parent'"
+fi
+
+echo "Task queued successfully."

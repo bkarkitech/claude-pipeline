@@ -65,6 +65,12 @@ notify() {
     # Webhook (background, non-blocking)
     _notify_webhook "$title" "$message" "$event_type" &
 
+    # Slack (background, non-blocking)
+    _notify_slack "$title" "$message" "$event_type" &
+
+    # Discord (background, non-blocking)
+    _notify_discord "$title" "$message" "$event_type" &
+
     # Regenerate dashboard status
     "$PIPELINE_DIR/bin/generate-status.sh" 2>/dev/null &
 }
@@ -171,6 +177,92 @@ _notify_webhook() {
     fi
 
     curl "${curl_args[@]}" >/dev/null 2>&1 || log "WARN" "Webhook notification failed: $url"
+}
+
+_notify_slack() {
+    local title="$1" message="$2" event_type="${3:-complete}"
+    local enabled webhook_url
+
+    # Parse slack config section
+    enabled=$(awk '/^\s+slack:/,/^\s+[a-z]+:/{print}' "$CONFIG_FILE" 2>/dev/null | grep "enabled:" | head -1 | sed 's/.*enabled:\s*//' | tr -d '[:space:]')
+    webhook_url=$(awk '/^\s+slack:/,/^\s+[a-z]+:/{print}' "$CONFIG_FILE" 2>/dev/null | grep "webhook_url:" | head -1 | sed 's/.*webhook_url:\s*//' | tr -d '"' | tr -d '[:space:]')
+
+    # Skip if not enabled or not configured
+    if [[ "$enabled" != "true" || -z "$webhook_url" ]]; then
+        return 0
+    fi
+
+    # Check events filter
+    local events_filter
+    events_filter=$(awk '/^\s+slack:/,/^\s+[a-z]+:/{print}' "$CONFIG_FILE" 2>/dev/null | grep "events:" | head -1 | sed 's/.*events:\s*//' | tr -d '"' | xargs)
+    if [[ -n "$events_filter" && "$events_filter" != *"$event_type"* ]]; then
+        return 0
+    fi
+
+    # Emoji based on event type
+    local emoji=""
+    case "$event_type" in
+        complete) emoji="✅" ;;
+        failure)  emoji="❌" ;;
+        start)    emoji="🚀" ;;
+        timeout)  emoji="⏰" ;;
+        resume)   emoji="🔄" ;;
+        approval) emoji="🔐" ;;
+        *)        emoji="📋" ;;
+    esac
+
+    # Build Slack payload
+    local payload
+    payload=$(jq -n --arg text "${emoji} *${title}*\n${message}\n_$(date '+%Y-%m-%d %H:%M')_" \
+        '{text: $text}')
+
+    curl -s -X POST "$webhook_url" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 \
+        >/dev/null 2>&1 || log "WARN" "Slack notification failed"
+}
+
+_notify_discord() {
+    local title="$1" message="$2" event_type="${3:-complete}"
+    local enabled webhook_url
+
+    # Parse discord config section
+    enabled=$(awk '/^\s+discord:/,/^\s+[a-z]+:/{print}' "$CONFIG_FILE" 2>/dev/null | grep "enabled:" | head -1 | sed 's/.*enabled:\s*//' | tr -d '[:space:]')
+    webhook_url=$(awk '/^\s+discord:/,/^\s+[a-z]+:/{print}' "$CONFIG_FILE" 2>/dev/null | grep "webhook_url:" | head -1 | sed 's/.*webhook_url:\s*//' | tr -d '"' | tr -d '[:space:]')
+
+    # Skip if not enabled or not configured
+    if [[ "$enabled" != "true" || -z "$webhook_url" ]]; then
+        return 0
+    fi
+
+    # Check events filter
+    local events_filter
+    events_filter=$(awk '/^\s+discord:/,/^\s+[a-z]+:/{print}' "$CONFIG_FILE" 2>/dev/null | grep "events:" | head -1 | sed 's/.*events:\s*//' | tr -d '"' | xargs)
+    if [[ -n "$events_filter" && "$events_filter" != *"$event_type"* ]]; then
+        return 0
+    fi
+
+    # Color based on event type (Discord uses decimal color values)
+    local color=""
+    case "$event_type" in
+        complete) color="5025616"  ;; # green
+        failure)  color="16007990" ;; # red
+        start)    color="3447003"  ;; # blue
+        timeout)  color="16776960" ;; # yellow
+        *)        color="9807270"  ;; # grey
+    esac
+
+    # Build Discord embed payload
+    local payload
+    payload=$(jq -n --arg title "$title" --arg desc "$message" --argjson color "$color" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{embeds: [{title: $title, description: $desc, color: $color, timestamp: $ts, footer: {text: "Claude Pipeline"}}]}')
+
+    curl -s -X POST "$webhook_url" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 \
+        >/dev/null 2>&1 || log "WARN" "Discord notification failed"
 }
 
 # ─── Frontmatter Parsing ─────────────────────────────────────────────────────
@@ -508,6 +600,67 @@ _requeue_unblocked_tasks() {
     done
 }
 
+# ─── Sub-Task: Check Parent on Child Completion ──────────────────────────────
+# When a child sub-task completes, update parent's subtask tracker and re-queue if all done
+_check_parent_subtasks() {
+    local completed_name="$1"
+    local completed_file="$DONE_DIR/${completed_name}.md"
+
+    [[ -f "$completed_file" ]] || return 0
+
+    local parent
+    parent=$(frontmatter_get "$completed_file" "parent_task" "")
+    [[ -z "$parent" ]] && return 0
+
+    local parent_state="$STATE_DIR/$parent/subtasks.json"
+    [[ -f "$parent_state" ]] || return 0
+
+    # Mark this subtask as completed
+    jq --arg name "$completed_name" '.[$name].status = "done"' \
+        "$parent_state" > "${parent_state}.tmp" 2>/dev/null \
+        && mv "${parent_state}.tmp" "$parent_state"
+
+    log "INFO" "Sub-task $completed_name completed (parent: $parent)"
+
+    # Check if ALL subtasks are done
+    local all_done
+    all_done=$(jq 'all(.[]; .status == "done")' "$parent_state" 2>/dev/null || echo "false")
+
+    if [[ "$all_done" == "true" ]]; then
+        # Re-queue parent if it's waiting in pending/
+        local parent_file
+        parent_file=$(find "$PENDING_DIR" -name "*${parent}*" -type f 2>/dev/null | head -1)
+        if [[ -n "$parent_file" ]]; then
+            log "INFO" "All subtasks complete for $parent — re-queuing parent"
+            # Remove the wait_for_subtasks flag so parent doesn't loop
+            frontmatter_set "$parent_file" "subtasks_completed" "true"
+            mv "$parent_file" "$QUEUE_DIR/"
+            notify "Pipeline: Subtasks Done" "All subtasks of $parent completed — resuming parent" "complete"
+        fi
+    fi
+}
+
+# ─── Sub-Task: Register a spawned subtask ────────────────────────────────────
+_register_subtask() {
+    local parent_name="$1"
+    local child_name="$2"
+
+    local parent_state="$STATE_DIR/$parent_name"
+    mkdir -p "$parent_state"
+
+    local subtasks_file="$parent_state/subtasks.json"
+    if [[ ! -f "$subtasks_file" ]]; then
+        echo "{}" > "$subtasks_file"
+    fi
+
+    # Add child to tracker
+    jq --arg name "$child_name" '.[$name] = {"status": "pending", "spawned_at": now | tostring}' \
+        "$subtasks_file" > "${subtasks_file}.tmp" 2>/dev/null \
+        && mv "${subtasks_file}.tmp" "$subtasks_file"
+
+    log "INFO" "Registered subtask $child_name under parent $parent_name"
+}
+
 # ─── Main: Process a Single Task ─────────────────────────────────────────────
 process_task() {
     local task_file="$1"
@@ -559,6 +712,40 @@ process_task() {
             # Move back to pending (or keep in queue) — dependencies not met
             log "INFO" "Task $task_name: dependencies not met, moving to pending/"
             mv "$task_file" "$PENDING_DIR/"
+            return 0
+        fi
+    fi
+
+    # ── Machine routing check (multi-machine coordination) ──
+    local machine_tag
+    machine_tag=$(frontmatter_get "$task_file" "machine" "any")
+    if [[ "$machine_tag" != "any" && -n "$machine_tag" ]]; then
+        local my_node
+        my_node=$(config_get "node_id" "$(hostname)")
+        local my_tags
+        my_tags=$(grep "tags:" "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/.*tags:\s*//' | tr -d '[]"' | xargs)
+
+        if [[ "$machine_tag" != "$my_node" ]]; then
+            # Check if it's a tag we have
+            if [[ -n "$my_tags" && "$my_tags" == *"$machine_tag"* ]]; then
+                : # We have this tag, proceed
+            else
+                log "INFO" "Task $task_name needs machine='$machine_tag', we are '$my_node'. Skipping (left for cluster-sync)."
+                return 0
+            fi
+        fi
+    fi
+
+    # ── Approval workflow check ──
+    local requires_approval
+    requires_approval=$(frontmatter_get "$task_file" "requires_approval" "false")
+    if [[ "$requires_approval" == "true" ]]; then
+        local approval_status
+        approval_status=$(frontmatter_get "$task_file" "approval_status" "pending")
+        if [[ "$approval_status" != "approved" ]]; then
+            log "INFO" "Task $task_name requires approval (status: $approval_status) — moving to pending/"
+            mv "$task_file" "$PENDING_DIR/"
+            notify "Pipeline: Approval Required" "$task_name needs approval before execution" "approval"
             return 0
         fi
     fi
@@ -694,6 +881,27 @@ $body"
     # ── Capture pre-execution git state ──
     capture_git_state "$work_dir" "$state_dir"
 
+    # ── Chain input injection ──
+    local input_from
+    input_from=$(frontmatter_get "$active_file" "input_from" "")
+    if [[ -n "$input_from" && "$exec_mode" == "fresh" ]]; then
+        local input_file="$STATE_DIR/$input_from/output.md"
+        if [[ -f "$input_file" ]]; then
+            local input_content
+            input_content=$(cat "$input_file")
+            prompt="## Input from previous task: $input_from
+
+$input_content
+
+---
+
+$prompt"
+            log "INFO" "Injected output from '$input_from' into $task_name"
+        else
+            log "WARN" "input_from=$input_from specified but no output.md found at $input_file"
+        fi
+    fi
+
     # ── Write state file ──
     local prev_budget_used="0"
     if [[ -f "$state_dir/current.json" ]]; then
@@ -706,6 +914,155 @@ $body"
     # Notify on task start if configured
     if [[ "$(config_get 'on_start' 'false')" == "true" ]]; then
         notify "Pipeline: Started" "$task_name — mode=$exec_mode, model=$model" "start"
+    fi
+
+    # ── Plugin System ──
+    # Check if a plugin handles this task type
+    local plugin_dir="$PIPELINE_DIR/plugins/$task_type"
+    local plugin_handled=false
+
+    if [[ -d "$plugin_dir" && -f "$plugin_dir/handler.sh" ]]; then
+        local plugin_mode
+        plugin_mode=$(grep "^mode:" "$plugin_dir/plugin.yml" 2>/dev/null | sed 's/mode:\s*//' | xargs)
+        plugin_mode="${plugin_mode:-replace}"
+
+        log "INFO" "Plugin found for type '$task_type' (mode: $plugin_mode)"
+
+        case "$plugin_mode" in
+            replace)
+                # Plugin handles everything — don't invoke Claude
+                log "INFO" "Plugin '$task_type' handling task $task_name (replace mode)"
+                local start_time exit_code
+                start_time=$(date +%s)
+
+                local task_log="$LOGS_DIR/${task_name}-$(date '+%Y%m%d-%H%M%S').log"
+                {
+                    echo "======================================================================="
+                    echo "Task: $task_name (Plugin: $task_type, mode: replace)"
+                    echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
+                    echo "======================================================================="
+                    echo ""
+                } > "$task_log"
+
+                set +e
+                (
+                    export TASK_NAME="$task_name"
+                    export TASK_FILE="$active_file"
+                    export WORK_DIR="$work_dir"
+                    export STATE_DIR="$state_dir"
+                    export TASK_BODY="$body"
+                    export PIPELINE_DIR
+                    cd "$work_dir" && bash "$plugin_dir/handler.sh"
+                ) >> "$task_log" 2>&1
+                exit_code=$?
+                set -e
+
+                local end_time duration
+                end_time=$(date +%s)
+                duration=$((end_time - start_time))
+
+                {
+                    echo ""
+                    echo "======================================================================="
+                    echo "Finished: $(date '+%Y-%m-%d %H:%M:%S')"
+                    echo "Duration: ${duration}s | Exit code: $exit_code"
+                    echo "======================================================================="
+                } >> "$task_log"
+
+                # Handle plugin result
+                if [[ $exit_code -eq 0 ]]; then
+                    jq '.status = "completed" | .resumable = false' \
+                        "$state_dir/current.json" > "$state_dir/current.json.tmp" 2>/dev/null \
+                        && mv "$state_dir/current.json.tmp" "$state_dir/current.json"
+                    mv "$active_file" "$DONE_DIR/"
+                    log "INFO" "Plugin task $task_name completed (${duration}s)"
+                    notify "Pipeline: Done" "$task_name completed via plugin (${duration}s)" "complete"
+                    _requeue_unblocked_tasks "$task_name"
+                    _check_parent_subtasks "$task_name"
+                else
+                    jq --arg reason "plugin_exit_$exit_code" '.status = "failed" | .resumable = false | .failure_reason = $reason' \
+                        "$state_dir/current.json" > "$state_dir/current.json.tmp" 2>/dev/null \
+                        && mv "$state_dir/current.json.tmp" "$state_dir/current.json"
+                    mv "$active_file" "$FAILED_DIR/"
+                    log "ERROR" "Plugin task $task_name failed (exit $exit_code, ${duration}s)"
+                    notify "Pipeline: Failed" "$task_name plugin failed (exit $exit_code)" "failure"
+                fi
+
+                release_lock "$task_name"
+                plugin_handled=true
+                ;;
+            pre)
+                # Run plugin BEFORE Claude — output prepended to prompt
+                local pre_output
+                pre_output=$(
+                    export TASK_NAME="$task_name" TASK_FILE="$active_file" WORK_DIR="$work_dir" TASK_BODY="$body"
+                    cd "$work_dir" && bash "$plugin_dir/handler.sh" 2>/dev/null
+                ) || true
+                if [[ -n "$pre_output" ]]; then
+                    prompt="## Plugin pre-processing output ($task_type)
+
+$pre_output
+
+---
+
+$prompt"
+                    log "INFO" "Plugin pre-hook output injected for $task_name"
+                fi
+                ;;
+            post)
+                # Will run after Claude completes — handled below
+                log "INFO" "Plugin '$task_type' registered for post-processing"
+                ;;
+            wrap)
+                # Plugin wraps the entire execution
+                log "INFO" "Plugin '$task_type' wrapping execution of $task_name"
+                local start_time exit_code
+                start_time=$(date +%s)
+
+                local task_log="$LOGS_DIR/${task_name}-$(date '+%Y%m%d-%H%M%S').log"
+
+                set +e
+                (
+                    export TASK_NAME="$task_name"
+                    export TASK_FILE="$active_file"
+                    export WORK_DIR="$work_dir"
+                    export STATE_DIR="$state_dir"
+                    export TASK_BODY="$body"
+                    export CLAUDE_BIN
+                    export PIPELINE_DIR
+                    cd "$work_dir" && bash "$plugin_dir/handler.sh"
+                ) > "$task_log" 2>&1
+                exit_code=$?
+                set -e
+
+                local end_time duration
+                end_time=$(date +%s)
+                duration=$((end_time - start_time))
+
+                if [[ $exit_code -eq 0 ]]; then
+                    jq '.status = "completed" | .resumable = false' \
+                        "$state_dir/current.json" > "$state_dir/current.json.tmp" 2>/dev/null \
+                        && mv "$state_dir/current.json.tmp" "$state_dir/current.json"
+                    mv "$active_file" "$DONE_DIR/"
+                    notify "Pipeline: Done" "$task_name completed (${duration}s)" "complete"
+                    _requeue_unblocked_tasks "$task_name"
+                else
+                    jq --arg reason "wrap_exit_$exit_code" '.status = "failed" | .resumable = false | .failure_reason = $reason' \
+                        "$state_dir/current.json" > "$state_dir/current.json.tmp" 2>/dev/null \
+                        && mv "$state_dir/current.json.tmp" "$state_dir/current.json"
+                    mv "$active_file" "$FAILED_DIR/"
+                    notify "Pipeline: Failed" "$task_name failed (exit $exit_code)" "failure"
+                fi
+
+                release_lock "$task_name"
+                plugin_handled=true
+                ;;
+        esac
+    fi
+
+    # If plugin fully handled the task (replace/wrap mode), we're done
+    if [[ "$plugin_handled" == "true" ]]; then
+        return 0
     fi
 
     # ── Build Claude command based on execution mode ──
@@ -770,6 +1127,9 @@ $body"
     > "$raw_output"
 
     set +e
+
+    # Export parent task name so sub-task spawning knows its parent
+    export PIPELINE_PARENT_TASK="$task_name"
 
     # macOS-compatible timeout using background process + kill
     (
@@ -855,12 +1215,59 @@ $body"
         # Capture final git state
         capture_git_state "$work_dir" "$state_dir"
 
+        # Save output for task chaining
+        if [[ -s "$raw_output" ]]; then
+            jq -r 'select(.type=="result") | .result // empty' "$raw_output" \
+                > "$state_dir/output.md" 2>/dev/null || true
+        fi
+
         mv "$active_file" "$DONE_DIR/"
         log "INFO" "Task $task_name completed successfully (${duration}s, attempt $attempt, mode $exec_mode)"
         notify "Pipeline: Done" "$task_name completed (${duration}s)" "complete"
 
         # Check if any pending tasks had this as a dependency — re-queue them
         _requeue_unblocked_tasks "$task_name"
+
+        # Chain: auto-queue the next task in a chain and inject our output
+        local chain_to
+        chain_to=$(frontmatter_get "$DONE_DIR/${task_name}.md" "chain" "")
+        if [[ -n "$chain_to" ]]; then
+            local chain_file
+            chain_file=$(find "$PENDING_DIR" "$QUEUE_DIR" -name "*${chain_to}*" -type f 2>/dev/null | head -1)
+            if [[ -n "$chain_file" ]]; then
+                # Inject input_from if not already set
+                if ! sed -n '/^---$/,/^---$/p' "$chain_file" | grep -q "^input_from:"; then
+                    frontmatter_set "$chain_file" "input_from" "$task_name"
+                fi
+                # Move to queue if in pending
+                if [[ "$(dirname "$chain_file")" == "$PENDING_DIR" ]]; then
+                    mv "$chain_file" "$QUEUE_DIR/"
+                    log "INFO" "Chain: queued $(basename "$chain_file" .md) with input from $task_name"
+                fi
+            else
+                log "WARN" "Chain target '$chain_to' not found in pending/ or queue/"
+            fi
+        fi
+
+        # Check if this is a sub-task — notify parent
+        _check_parent_subtasks "$task_name"
+
+        # Check if this task spawned subtasks and needs to wait for them
+        local wait_for_subs
+        wait_for_subs=$(frontmatter_get "$DONE_DIR/${task_name}.md" "wait_for_subtasks" "false")
+        if [[ "$wait_for_subs" == "true" ]]; then
+            local subtasks_file="$state_dir/subtasks.json"
+            if [[ -f "$subtasks_file" ]]; then
+                local all_subs_done
+                all_subs_done=$(jq 'length == 0 or all(.[]; .status == "done")' "$subtasks_file" 2>/dev/null || echo "true")
+                if [[ "$all_subs_done" == "false" ]]; then
+                    # Move back to pending — will be re-queued when subtasks complete
+                    log "INFO" "Task $task_name waiting for subtasks to complete — moving to pending/"
+                    mv "$DONE_DIR/${task_name}.md" "$PENDING_DIR/"
+                    frontmatter_set "$PENDING_DIR/${task_name}.md" "resume_session" "$session_id"
+                fi
+            fi
+        fi
 
     elif [[ $exit_code -eq 124 ]]; then
         # Timeout — mark as resumable
@@ -945,11 +1352,18 @@ main() {
         return
     fi
 
-    # Otherwise, process all tasks in queue/ (sorted by priority in filename)
+    # Otherwise, process all tasks in queue/ (sorted by priority, highest first)
     local tasks=()
-    while IFS= read -r -d '' task_file; do
-        tasks+=("$task_file")
-    done < <(find "$QUEUE_DIR" -name "*.md" -type f -print0 | sort -z)
+    while IFS= read -r task_file; do
+        [[ -n "$task_file" ]] && tasks+=("$task_file")
+    done < <(
+        for f in "$QUEUE_DIR"/*.md; do
+            [[ -f "$f" ]] || continue
+            local p
+            p=$(sed -n '/^---$/,/^---$/p' "$f" | grep "^priority:" | head -1 | sed 's/priority:\s*//' | xargs)
+            echo "${p:-5}|$f"
+        done | sort -t'|' -k1 -n -r | cut -d'|' -f2
+    )
 
     if [[ ${#tasks[@]} -eq 0 ]]; then
         log "INFO" "No tasks in queue."

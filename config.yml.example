@@ -1,6 +1,5 @@
 # Claude Pipeline Configuration
 # ~/.claude-pipeline/config.yml
-# Copy this to config.yml and fill in your values.
 
 pipeline:
   # Maximum concurrent task executions
@@ -12,6 +11,7 @@ pipeline:
 
 defaults:
   # Claude model to use (use aliases: sonnet, opus, haiku - or full model names)
+  # Note: model availability depends on your API gateway
   model: sonnet
   # Effort level (low, medium, high, xhigh, max)
   effort: max
@@ -26,16 +26,24 @@ defaults:
 
 # Session checkpointing & resumption
 checkpointing:
+  # Enable session persistence (allows resume after interruption)
   enabled: true
+  # Sessions older than this many days cannot be resumed
   session_max_age_days: 7
+  # Maximum number of resume attempts before marking non-resumable
   max_attempts: 5
+  # Don't resume if less than this much budget remains
   min_budget_for_resume: 0.50
+  # Capture git state before each execution attempt
   capture_git_state: true
+  # Automatically re-queue tasks that time out (without manual intervention)
   auto_resume_on_timeout: false
 
 # Map short repo names to absolute paths
 repos:
-  # my-project: /Users/you/Projects/my-project
+  cafe-aapama: /Users/bkarki/Projects/cafe-aapama
+  skykeep: /Users/bkarki/Projects/skykeep
+  pic-preview: /Users/bkarki/Projects/pic-preview
 
 notifications:
   enabled: true
@@ -47,8 +55,8 @@ notifications:
   # Telegram integration
   telegram:
     enabled: false
-    bot_token: "YOUR_BOT_TOKEN"
-    chat_id: "YOUR_CHAT_ID"
+    bot_token: ""
+    chat_id: ""
 
   # Email integration (uses system sendmail or SMTP)
   email:
@@ -61,9 +69,90 @@ notifications:
   webhook:
     enabled: false
     url: ""
+    # Optional auth header: "Bearer <token>" or "Basic <base64>"
     auth_header: ""
+    # Events to send: complete, failure, start, timeout, resume
     events: "complete,failure,timeout"
 
 logging:
+  # Log level: debug, info, warn, error
   level: info
+  # Days to retain logs before auto-cleanup
   retain_days: 30
+
+# ─── Slack Integration ─────────────────────────────────────────────────────────
+  slack:
+    enabled: false
+    # Incoming webhook URL for notifications
+    webhook_url: ""
+    # Bot token for receiving commands (requires Socket Mode)
+    bot_token: ""
+    channel_id: ""
+    # Events to notify on: complete, failure, timeout, start
+    events: "complete,failure,timeout"
+
+# ─── Discord Integration ───────────────────────────────────────────────────────
+  discord:
+    enabled: false
+    # Webhook URL for notifications
+    webhook_url: ""
+    # Bot token for receiving commands
+    bot_token: ""
+    channel_id: ""
+    events: "complete,failure,timeout"
+
+# ─── Mobile Task Creation ──────────────────────────────────────────────────────
+mobile:
+  # Enable file sync from iCloud/Dropbox folder
+  sync_enabled: false
+  sync_folder: "~/Library/Mobile Documents/com~apple~CloudDocs/Pipeline"
+  # The API endpoint /api/mobile/create is always available when api-server is running
+
+# ─── Multi-Machine Cluster ─────────────────────────────────────────────────────
+cluster:
+  enabled: false
+  # Unique identifier for this machine
+  node_id: ""
+  # Capabilities/tags for this machine
+  tags: []
+  # Peer machines in the cluster
+  peers: []
+  #   - name: "linux-server"
+  #     url: "http://192.168.1.100:7778"
+  #     tags: ["linux", "docker"]
+  # How often to sync with peers (seconds)
+  sync_interval: 30
+
+# ─── Approval Workflows ───────────────────────────────────────────────────────
+approvals:
+  enabled: false
+  # Auto-require approval for these conditions:
+  auto_require: []
+  #   - type: deploy
+  #   - priority: 10
+  #   - repo: production-app
+  # Notification channels for approval requests
+  notify_channels: ["telegram"]
+  # Timeout: auto-reject after N hours (0 = never)
+  timeout_hours: 24
+
+# ─── Plugin System ─────────────────────────────────────────────────────────────
+plugins:
+  # Plugin directory (relative to pipeline dir)
+  dir: plugins
+  # Timeout for plugin handlers (seconds)
+  handler_timeout: 300
+
+# ─── Team Features ─────────────────────────────────────────────────────────────
+team:
+  enabled: false
+  name: ""
+  members: []
+  #   - name: "username"
+  #     role: admin
+  #     machine: "machine-name"
+  auth:
+    type: "none"  # none | token
+    tokens: []
+    #   - user: "username"
+    #     token: "ppl_xxx..."

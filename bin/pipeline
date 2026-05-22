@@ -1122,6 +1122,284 @@ _telegram_status() {
     fi
 }
 
+# ─── Spawn Sub-Task ───────────────────────────────────────────────────────────
+cmd_spawn() {
+    # Delegate to pipeline-spawn (designed to be called by Claude inside tasks too)
+    "$PIPELINE_DIR/bin/pipeline-spawn" "$@"
+}
+
+# ─── Task Chaining ────────────────────────────────────────────────────────────
+cmd_chain() {
+    # pipeline chain A B C — Links tasks so A→B→C (B gets input from A, C gets input from B)
+    if [[ $# -lt 2 ]]; then
+        echo -e "${RED}Usage:${NC} pipeline chain <task1> <task2> [task3...]"
+        echo "  Links tasks in a chain: output of each feeds into the next."
+        echo ""
+        echo "  Example: pipeline chain research-api implement-api write-docs"
+        exit 1
+    fi
+
+    local prev=""
+    for task_name in "$@"; do
+        # Find the task file
+        local task_file=""
+        for dir in "$QUEUE_DIR" "$PENDING_DIR"; do
+            local found
+            found=$(find "$dir" -name "*${task_name}*" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]]; then
+                task_file="$found"
+                break
+            fi
+        done
+
+        if [[ -z "$task_file" ]]; then
+            echo -e "${YELLOW}⚠${NC} Task not found (skipping): $task_name"
+            prev="$task_name"
+            continue
+        fi
+
+        if [[ -n "$prev" ]]; then
+            # Set input_from on this task
+            local has_input
+            has_input=$(sed -n '/^---$/,/^---$/p' "$task_file" 2>/dev/null | grep "^input_from:" || true)
+            if [[ -z "$has_input" ]]; then
+                # Insert input_from before second ---
+                awk -v field="input_from: $prev" '
+                    BEGIN { count=0 }
+                    /^---$/ { count++ }
+                    count==2 && /^---$/ { print field }
+                    { print }
+                ' "$task_file" > "${task_file}.tmp" && mv "${task_file}.tmp" "$task_file"
+            fi
+
+            # Set chain on the previous task
+            local prev_file=""
+            for dir in "$QUEUE_DIR" "$PENDING_DIR" "$DONE_DIR"; do
+                local found
+                found=$(find "$dir" -name "*${prev}*" -type f 2>/dev/null | head -1)
+                if [[ -n "$found" ]]; then
+                    prev_file="$found"
+                    break
+                fi
+            done
+            if [[ -n "$prev_file" ]]; then
+                local has_chain
+                has_chain=$(sed -n '/^---$/,/^---$/p' "$prev_file" 2>/dev/null | grep "^chain:" || true)
+                if [[ -z "$has_chain" ]]; then
+                    awk -v field="chain: $task_name" '
+                        BEGIN { count=0 }
+                        /^---$/ { count++ }
+                        count==2 && /^---$/ { print field }
+                        { print }
+                    ' "$prev_file" > "${prev_file}.tmp" && mv "${prev_file}.tmp" "$prev_file"
+                fi
+            fi
+
+            echo -e "  ${GREEN}→${NC} $prev → $(basename "$task_file" .md)"
+        fi
+
+        prev="$task_name"
+    done
+
+    echo -e "${GREEN}✓${NC} Chain linked successfully."
+}
+
+# ─── Plugin Management ────────────────────────────────────────────────────────
+cmd_plugin() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "$action" in
+        list)
+            echo -e "${BOLD}Installed Plugins:${NC}"
+            echo ""
+            local found=false
+            for d in "$PIPELINE_DIR/plugins"/*/; do
+                [[ -d "$d" ]] || continue
+                found=true
+                local name desc mode
+                name=$(basename "$d")
+                desc=$(grep "^description:" "$d/plugin.yml" 2>/dev/null | sed 's/description:\s*//' | tr -d '"')
+                mode=$(grep "^mode:" "$d/plugin.yml" 2>/dev/null | sed 's/mode:\s*//' | xargs)
+                echo -e "  ${CYAN}$name${NC}  ${DIM}($mode) $desc${NC}"
+            done
+            if [[ "$found" == "false" ]]; then
+                echo -e "  ${DIM}No plugins installed.${NC}"
+                echo -e "  ${DIM}Create one with: pipeline plugin create <name>${NC}"
+            fi
+            ;;
+        create)
+            local name="${1:-}"
+            if [[ -z "$name" ]]; then
+                echo -e "${RED}Usage:${NC} pipeline plugin create <name>"
+                exit 1
+            fi
+            mkdir -p "$PIPELINE_DIR/plugins/$name"
+            cat > "$PIPELINE_DIR/plugins/$name/plugin.yml" <<EOF
+name: $name
+version: 1.0
+description: "Custom task type: $name"
+type: $name
+mode: replace
+
+# Execution modes:
+#   replace — handler.sh runs INSTEAD of Claude
+#   pre     — handler.sh runs BEFORE Claude, output prepended to prompt
+#   post    — handler.sh runs AFTER Claude completes
+#   wrap    — handler.sh wraps the entire execution
+EOF
+            cat > "$PIPELINE_DIR/plugins/$name/handler.sh" <<'EOF'
+#!/usr/bin/env bash
+# Plugin handler for custom task type
+# Available environment variables:
+#   TASK_NAME    — Name of the task being executed
+#   TASK_FILE    — Path to the task .md file
+#   WORK_DIR     — Working directory for the task
+#   STATE_DIR    — State directory for the task
+#   TASK_BODY    — The task body text (instructions)
+
+set -euo pipefail
+
+echo "Plugin handler running for task: $TASK_NAME"
+echo "Working directory: $WORK_DIR"
+echo ""
+echo "Task body:"
+echo "$TASK_BODY"
+echo ""
+echo "--- Implement your logic here ---"
+EOF
+            chmod +x "$PIPELINE_DIR/plugins/$name/handler.sh"
+            echo -e "${GREEN}✓${NC} Plugin created: plugins/$name/"
+            echo -e "  Edit ${CYAN}plugins/$name/handler.sh${NC} to implement your logic."
+            echo -e "  Edit ${CYAN}plugins/$name/plugin.yml${NC} to configure metadata."
+            ;;
+        remove)
+            local name="${1:-}"
+            if [[ -z "$name" ]]; then
+                echo -e "${RED}Usage:${NC} pipeline plugin remove <name>"
+                exit 1
+            fi
+            if [[ -d "$PIPELINE_DIR/plugins/$name" ]]; then
+                rm -rf "$PIPELINE_DIR/plugins/$name"
+                echo -e "${GREEN}✓${NC} Plugin removed: $name"
+            else
+                echo -e "${RED}Plugin not found:${NC} $name"
+                exit 1
+            fi
+            ;;
+        *)
+            echo -e "${RED}Usage:${NC} pipeline plugin [list|create|remove] [name]"
+            exit 1
+            ;;
+    esac
+}
+
+# ─── Approval Workflows ──────────────────────────────────────────────────────
+cmd_approve() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Usage:${NC} pipeline approve <task-name>"
+        echo "  Approve a task that requires approval before execution."
+        exit 1
+    fi
+
+    local task_file
+    task_file=$(find "$PENDING_DIR" -name "*${name}*" -type f 2>/dev/null | head -1)
+    if [[ -z "$task_file" ]]; then
+        echo -e "${RED}Error:${NC} Task not found in pending/: $name"
+        exit 1
+    fi
+
+    # Update approval status
+    local task_basename
+    task_basename=$(basename "$task_file")
+    sed -i '' "s/^approval_status:.*/approval_status: approved/" "$task_file"
+    # Add approved_by if not present
+    if ! grep -q "^approved_by:" <(sed -n '/^---$/,/^---$/p' "$task_file"); then
+        awk -v field="approved_by: $(whoami)" '
+            BEGIN { count=0 }
+            /^---$/ { count++ }
+            count==2 && /^---$/ { print field }
+            { print }
+        ' "$task_file" > "${task_file}.tmp" && mv "${task_file}.tmp" "$task_file"
+    else
+        sed -i '' "s/^approved_by:.*/approved_by: $(whoami)/" "$task_file"
+    fi
+
+    # Move to queue
+    mv "$task_file" "$QUEUE_DIR/"
+    echo -e "${GREEN}✓${NC} Approved and queued: $(basename "$task_file" .md)"
+}
+
+cmd_reject() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Usage:${NC} pipeline reject <task-name>"
+        echo "  Reject a task that requires approval."
+        exit 1
+    fi
+
+    local task_file
+    task_file=$(find "$PENDING_DIR" -name "*${name}*" -type f 2>/dev/null | head -1)
+    if [[ -z "$task_file" ]]; then
+        echo -e "${RED}Error:${NC} Task not found in pending/: $name"
+        exit 1
+    fi
+
+    sed -i '' "s/^approval_status:.*/approval_status: rejected/" "$task_file"
+    mv "$task_file" "$FAILED_DIR/"
+    echo -e "${YELLOW}✗${NC} Rejected: $(basename "$task_file" .md)"
+}
+
+# ─── Cluster Management ──────────────────────────────────────────────────────
+cmd_cluster() {
+    local action="${1:-status}"
+    shift 2>/dev/null || true
+
+    case "$action" in
+        status)
+            echo -e "${BOLD}Cluster Status${NC}"
+            echo ""
+            local node_id
+            node_id=$(grep "node_id:" "$PIPELINE_DIR/config.yml" 2>/dev/null | head -1 | sed 's/.*node_id:\s*//' | tr -d '"' | xargs)
+            node_id="${node_id:-$(hostname)}"
+            echo -e "  ${GREEN}●${NC} This node: ${BOLD}$node_id${NC}"
+            local tags
+            tags=$(grep "tags:" "$PIPELINE_DIR/config.yml" 2>/dev/null | head -1 | sed 's/.*tags:\s*//' | xargs)
+            if [[ -n "$tags" ]]; then
+                echo -e "    Tags: $tags"
+            fi
+            echo ""
+
+            # Check peers
+            local peers_section
+            peers_section=$(sed -n '/^  peers:/,/^[^ ]/p' "$PIPELINE_DIR/config.yml" 2>/dev/null | grep -E "^\s+- name:" | sed 's/.*name:\s*//' | tr -d '"')
+            if [[ -n "$peers_section" ]]; then
+                echo -e "  ${BOLD}Peers:${NC}"
+                while IFS= read -r peer; do
+                    local peer_url
+                    peer_url=$(sed -n "/name: \"*${peer}\"*/,/name:/p" "$PIPELINE_DIR/config.yml" | grep "url:" | head -1 | sed 's/.*url:\s*//' | tr -d '"' | xargs)
+                    if [[ -n "$peer_url" ]]; then
+                        # Quick health check
+                        if curl -s --connect-timeout 2 "$peer_url/api/status" >/dev/null 2>&1; then
+                            echo -e "    ${GREEN}●${NC} $peer ($peer_url) — reachable"
+                        else
+                            echo -e "    ${RED}●${NC} $peer ($peer_url) — unreachable"
+                        fi
+                    fi
+                done <<< "$peers_section"
+            else
+                echo -e "  ${DIM}No peers configured.${NC}"
+                echo -e "  ${DIM}Add peers in config.yml under cluster.peers${NC}"
+            fi
+            ;;
+        *)
+            echo -e "${RED}Usage:${NC} pipeline cluster [status]"
+            exit 1
+            ;;
+    esac
+}
+
 cmd_clean() {
     local days="${1:-30}"
     local cleaned=0
@@ -1736,7 +2014,7 @@ cmd_help() {
     echo -e "${BOLD}USAGE${NC}"
     echo "  pipeline <command> [args...]"
     echo ""
-    echo -e "${BOLD}COMMANDS${NC}"
+    echo -e "${BOLD}TASK COMMANDS${NC}"
     echo -e "  ${GREEN}add${NC} <description> [--preview] [--dumb] [--repo X] [--type X] [--depends-on X] [--schedule X]"
     echo "      Create a task from plain English (AI-powered inference)"
     echo "      --preview     Show generated task for approval before queuing"
@@ -1750,9 +2028,16 @@ cmd_help() {
     echo -e "  ${GREEN}run${NC} <name>"
     echo "      Execute a pending task (moves to queue)"
     echo ""
+    echo -e "  ${GREEN}spawn${NC} <description> [--repo X] [--priority N] [--type X]"
+    echo "      Create a sub-task (links to parent via PIPELINE_PARENT_TASK env)"
+    echo ""
+    echo -e "  ${GREEN}chain${NC} <task1> <task2> [task3...]"
+    echo "      Link tasks in a chain (output of each feeds into the next)"
+    echo ""
     echo -e "  ${GREEN}dispatch${NC}"
     echo "      Manually trigger the dispatcher to process the queue"
     echo ""
+    echo -e "${BOLD}MONITORING${NC}"
     echo -e "  ${CYAN}status${NC}"
     echo "      Show pipeline status dashboard"
     echo ""
@@ -1768,15 +2053,34 @@ cmd_help() {
     echo -e "  ${CYAN}live${NC} [task] [-f]"
     echo "      Watch what Claude is doing in real-time (tool calls, output, cost)"
     echo ""
+    echo -e "  ${CYAN}state${NC} <name>"
+    echo "      View checkpoint state (session, attempts, git snapshot)"
+    echo ""
+    echo -e "  ${CYAN}deps${NC}"
+    echo "      Show task dependency graph"
+    echo ""
+    echo -e "  ${CYAN}costs${NC} [--csv] [--report] [--repo X]"
+    echo "      Show cost report (today / week / month / all-time / per-repo)"
+    echo ""
+    echo -e "${BOLD}RECOVERY${NC}"
     echo -e "  ${GREEN}resume${NC} <name>"
     echo "      Resume an interrupted task (picks up where it left off)"
     echo ""
     echo -e "  ${YELLOW}retry${NC} <name>"
     echo "      Re-queue a failed task (fresh start, discards session)"
     echo ""
-    echo -e "  ${CYAN}state${NC} <name>"
-    echo "      View checkpoint state (session, attempts, git snapshot)"
+    echo -e "${BOLD}APPROVALS${NC}"
+    echo -e "  ${GREEN}approve${NC} <name>"
+    echo "      Approve a task waiting for approval"
     echo ""
+    echo -e "  ${YELLOW}reject${NC} <name>"
+    echo "      Reject a task waiting for approval"
+    echo ""
+    echo -e "${BOLD}PLUGINS${NC}"
+    echo -e "  ${CYAN}plugin${NC} [list|create|remove] [name]"
+    echo "      Manage custom task type plugins"
+    echo ""
+    echo -e "${BOLD}SERVICES${NC}"
     echo -e "  ${YELLOW}watch${NC}"
     echo "      Start/restart the filesystem watcher"
     echo ""
@@ -1786,17 +2090,14 @@ cmd_help() {
     echo -e "  ${CYAN}dashboard${NC} [port]"
     echo "      Open the web dashboard (default port: 7778)"
     echo ""
-    echo -e "  ${CYAN}costs${NC} [--csv] [--report] [--repo X]"
-    echo "      Show cost report (today / week / month / all-time / per-repo)"
-    echo "      --csv     Export as CSV"
-    echo "      --report  Generate detailed markdown report"
-    echo "      --repo X  Filter to a specific repository"
+    echo -e "  ${CYAN}telegram${NC} [start|stop|status]"
+    echo "      Manage the Telegram bot"
     echo ""
-    echo -e "  ${CYAN}notify-test${NC} [telegram|email|webhook|all]"
+    echo -e "  ${CYAN}cluster${NC} [status]"
+    echo "      View multi-machine cluster status"
+    echo ""
+    echo -e "  ${CYAN}notify-test${NC} [telegram|email|webhook|slack|discord|all]"
     echo "      Test notification channels (sends a test message)"
-    echo ""
-    echo -e "  ${CYAN}deps${NC}"
-    echo "      Show task dependency graph"
     echo ""
     echo -e "  ${CYAN}schedule${NC} [list|remove <name>]"
     echo "      List or manage scheduled/recurring tasks"
@@ -1809,6 +2110,10 @@ cmd_help() {
     echo "  pipeline add \"Research best practices for WebSocket scaling\" # AI infers type=research"
     echo "  pipeline add \"Refactor the payment flow\" --preview          # Review AI output first"
     echo "  pipeline add \"Quick fix\" --dumb --repo cafe-aapama         # Skip AI, simple template"
+    echo "  pipeline spawn \"Write unit tests\" --repo skykeep --priority 7"
+    echo "  pipeline chain research-api implement-api write-docs"
+    echo "  pipeline plugin create deploy"
+    echo "  pipeline approve 005-deploy-production"
     echo "  pipeline new code"
     echo "  pipeline status"
     echo "  pipeline view 001"
@@ -1819,14 +2124,21 @@ cmd_help() {
     echo -e "${BOLD}TASK FILE FORMAT${NC}"
     echo "  Drop a .md file in $QUEUE_DIR with YAML frontmatter:"
     echo "  ---"
-    echo "  type: code|research|review|writing|general"
+    echo "  type: code|research|review|writing|general|<plugin-type>"
     echo "  repo: project-name-or-path"
     echo "  auto: true|false"
-    echo "  priority: 1-10"
-    echo "  model: opus|sonnet"
+    echo "  priority: 1-10 (higher = more urgent)"
+    echo "  model: opus|sonnet|haiku"
     echo "  timeout: 600"
     echo "  budget: 5.00"
     echo "  depends_on: task-name-1, task-name-2"
+    echo "  input_from: previous-task-name"
+    echo "  chain: next-task-name"
+    echo "  parent_task: parent-name"
+    echo "  wait_for_subtasks: true|false"
+    echo "  machine: hostname|tag|any"
+    echo "  requires_approval: true|false"
+    echo "  assigned_to: username"
     echo "  schedule: \"0 9 * * 1-5\""
     echo "  ---"
     echo "  # Your task description here"
@@ -1840,6 +2152,8 @@ case "$command" in
     add)      cmd_add "$@" ;;
     new)      cmd_new "$@" ;;
     run)      cmd_run "$@" ;;
+    spawn)    cmd_spawn "$@" ;;
+    chain)    cmd_chain "$@" ;;
     dispatch) cmd_dispatch ;;
     dashboard) cmd_dashboard "$@" ;;
     costs)    cmd_costs "$@" ;;
@@ -1860,6 +2174,10 @@ case "$command" in
     down)     cmd_down ;;
     install)  cmd_install ;;
     telegram) cmd_telegram "$@" ;;
+    plugin)   cmd_plugin "$@" ;;
+    approve)  cmd_approve "$@" ;;
+    reject)   cmd_reject "$@" ;;
+    cluster)  cmd_cluster "$@" ;;
     clean)    cmd_clean "$@" ;;
     help|-h|--help) cmd_help ;;
     *)

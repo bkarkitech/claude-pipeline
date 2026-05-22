@@ -693,7 +693,7 @@
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-top: 2rem;">
         <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
             <h4 style="color: var(--green); margin-bottom: 0.5rem;">You Type</h4>
-            <p style="color: var(--text-dim); font-size: 0.9rem;"><code>pipeline add "fix the auth timeout bug in cafe-aapama"</code> &mdash; plain English, nothing else.</p>
+            <p style="color: var(--text-dim); font-size: 0.9rem;"><code>pipeline add "fix the auth timeout bug in skykeep"</code> &mdash; plain English, nothing else.</p>
         </div>
         <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
             <h4 style="color: var(--yellow); margin-bottom: 0.5rem;">AI Generates</h4>
@@ -720,7 +720,7 @@
 
 <span class="comment"># AI generates:</span>
 <span class="keyword">type:</span> <span class="string">code</span>         <span class="comment"># inferred from "fix"</span>
-<span class="keyword">repo:</span> <span class="string">cafe-aapama</span>  <span class="comment"># inferred from context</span>
+<span class="keyword">repo:</span> <span class="string">skykeep</span>  <span class="comment"># inferred from context</span>
 <span class="keyword">priority:</span> <span class="string">8</span>        <span class="comment"># bug affecting users = high</span>
 <span class="keyword">branch:</span> <span class="string">fix/auth-timeout-session</span>
 <span class="keyword">budget:</span> <span class="string">5.00</span>       <span class="comment"># code task budget</span>
@@ -1073,12 +1073,12 @@ flowchart LR
     <p class="section-subtitle">See actual commands and their output. Click buttons to simulate workflows.</p>
 
     <div class="demo-terminal" id="terminal">
-        <div><span class="prompt">~ $</span> <span class="command">pipeline add "fix the auth timeout bug in cafe-aapama"</span></div>
+        <div><span class="prompt">~ $</span> <span class="command">pipeline add "fix the auth timeout bug in skykeep"</span></div>
         <div class="output">
 &#9889; Generating task...
 &#10003; Task created: 007-fix-auth-timeout-bug-users-logging-out-after-5-min.md
   -> Queued for auto-pickup
-  type= code  repo= cafe-aapama  model= sonnet
+  type= code  repo= skykeep  model= sonnet
 </div>
         <div><span class="prompt">~ $</span> <span class="cursor"></span></div>
     </div>
@@ -1154,7 +1154,7 @@ flowchart LR
             <span class="lang-tag">AI-generated from: "fix the auth timeout"</span>
             <pre><span class="comment">---</span>
 <span class="keyword">type:</span> <span class="string">code</span>
-<span class="keyword">repo:</span> <span class="string">cafe-aapama</span>
+<span class="keyword">repo:</span> <span class="string">skykeep</span>
 <span class="keyword">priority:</span> <span class="string">8</span>
 <span class="keyword">auto:</span> <span class="string">true</span>
 <span class="keyword">model:</span> <span class="string">sonnet</span>
@@ -1186,7 +1186,7 @@ settings or token refresh logic...
             <span class="lang-tag">markdown</span>
             <pre><span class="comment">---</span>
 <span class="keyword">type:</span> <span class="string">code</span>
-<span class="keyword">repo:</span> <span class="string">cafe-aapama</span>
+<span class="keyword">repo:</span> <span class="string">skykeep</span>
 <span class="keyword">priority:</span> <span class="string">5</span>
 <span class="keyword">auto:</span> <span class="string">true</span>
 <span class="keyword">model:</span> <span class="string">opus</span>
@@ -1398,7 +1398,7 @@ claude <span class="flag">--resume</span> <span class="string">"a1b2c3d4-e5f6-..
   <span class="keyword">capture_git_state:</span> <span class="string">true</span>
 
 <span class="keyword">repos:</span>
-  <span class="string">cafe-aapama</span>: /Users/bkarki/Projects/cafe-aapama
+  <span class="string">skykeep</span>: /Users/bkarki/Projects/skykeep
   <span class="string">skykeep</span>: /Users/bkarki/Projects/skykeep
   <span class="string">pic-preview</span>: /Users/bkarki/Projects/pic-preview
 
@@ -1459,11 +1459,11 @@ claude <span class="flag">--resume</span> <span class="string">"a1b2c3d4-e5f6-..
     // Demo terminal
     const demos = {
         'smart-add': {
-            command: 'pipeline add "fix the auth timeout bug in cafe-aapama, users logged out after 5 mins"',
+            command: 'pipeline add "fix the auth timeout bug in skykeep, users logged out after 5 mins"',
             output: `&#9889; Generating task...
 &#10003; Task created: 007-fix-auth-timeout-bug-users-logging-out-after-5-min.md
   -> Queued for auto-pickup
-  type= code  repo= cafe-aapama  model= sonnet`
+  type= code  repo= skykeep  model= sonnet`
         },
         'research': {
             command: 'pipeline add "compare redis vs memcached for session caching"',

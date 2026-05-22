@@ -663,7 +663,7 @@
     <p>An autonomous, file-based task execution system powered by Claude AI. Write a task in plain English. Walk away. Come back to results.</p>
     <div class="hero-stats">
         <div class="stat">
-            <div class="stat-value">~1500</div>
+            <div class="stat-value">~2500</div>
             <div class="stat-label">Lines of Bash</div>
         </div>
         <div class="stat">
@@ -671,7 +671,7 @@
             <div class="stat-label">Dependencies to Install</div>
         </div>
         <div class="stat">
-            <div class="stat-value">3</div>
+            <div class="stat-value">7</div>
             <div class="stat-label">Core Features</div>
         </div>
         <div class="stat">
@@ -708,8 +708,8 @@
 
 <!-- Key Features -->
 <section id="features" class="fade-in">
-    <h2>Key Features <span class="version-badge">v2.0</span></h2>
-    <p class="section-subtitle">Three layers of intelligence working together.</p>
+    <h2>Key Features <span class="version-badge">v3.0</span></h2>
+    <p class="section-subtitle">Seven layers of intelligence working together.</p>
 
     <div class="feature-box green">
         <h4>1. Intelligent Task Generator (AI-Powered)</h4>
@@ -778,7 +778,112 @@
             <li>launchd service keeps the system alive across reboots</li>
         </ul>
     </div>
-</section>
+
+    <div class="feature-box">
+        <h4>4. Task Dependencies</h4>
+        <p style="margin-bottom: 0.75rem;">Define execution order with <code>depends_on</code>. Tasks wait in pending until all dependencies complete, then auto-queue.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="comment"># Task B waits for Task A</span>
+<span class="prompt">$</span> pipeline add "deploy to staging" <span class="flag">--depends-on</span> <span class="string">"run-integration-tests"</span>
+<span class="output">&#10003; Task created: 013-deploy-to-staging.md
+  -> Blocked on: run-integration-tests</span>
+
+<span class="comment"># View dependency graph</span>
+<span class="prompt">$</span> pipeline deps
+<span class="output">  ◻ 013-deploy-to-staging: Deploy to staging
+    └── run-integration-tests  [✓ done]</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li><code>depends_on: task-a, task-b</code> frontmatter (comma-separated)</li>
+            <li>Dispatcher checks all deps are in <code>done/</code> before processing</li>
+            <li>Blocked tasks auto-queue when dependencies complete</li>
+            <li><code>pipeline deps</code> shows full dependency graph with status</li>
+            <li><code>--depends-on</code> flag works with both smart and dumb add modes</li>
+        </ul>
+    </div>
+
+    <div class="feature-box green">
+        <h4>5. Scheduled & Recurring Tasks</h4>
+        <p style="margin-bottom: 0.75rem;">Run tasks on a cron schedule. The watcher evaluates cron expressions every 60 seconds and queues matching tasks automatically.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="comment"># Run tests every weekday at 9am</span>
+<span class="prompt">$</span> pipeline add "run integration tests" <span class="flag">--schedule</span> <span class="string">"0 9 * * 1-5"</span> <span class="flag">--repo</span> myapp
+
+<span class="comment"># List all scheduled tasks</span>
+<span class="prompt">$</span> pipeline schedule
+<span class="output">  ⏱  012-run-integration-tests
+      Schedule: 0 9 * * 1-5
+      Last run: 2026-05-22 09:00</span>
+
+<span class="comment"># Remove a schedule</span>
+<span class="prompt">$</span> pipeline schedule remove 012</pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Standard 5-field cron: <code>min hour dom month dow</code></li>
+            <li>Supports <code>*</code>, <code>*/N</code>, ranges (<code>1-5</code>), comma lists</li>
+            <li>Creates run copies &mdash; original task preserved for next trigger</li>
+            <li>De-duplication: won't re-trigger within the same minute</li>
+            <li>Persistent state tracks last-run times across restarts</li>
+        </ul>
+    </div>
+
+    <div class="feature-box purple">
+        <h4>6. Multi-Channel Notifications (Telegram, Email, Webhook)</h4>
+        <p style="margin-bottom: 0.75rem;">Get notified via macOS, Telegram, email, or any webhook endpoint. Each event type (start, complete, failure, timeout) is tagged.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">config.yml</span>
+            <pre><span class="keyword">notifications:</span>
+  <span class="keyword">telegram:</span>
+    <span class="keyword">enabled:</span> <span class="string">true</span>
+    <span class="keyword">bot_token:</span> <span class="string">"123456:ABC..."</span>
+    <span class="keyword">chat_id:</span> <span class="string">"-100123456"</span>
+  <span class="keyword">webhook:</span>
+    <span class="keyword">enabled:</span> <span class="string">true</span>
+    <span class="keyword">url:</span> <span class="string">"https://hooks.slack.com/..."</span>
+    <span class="keyword">events:</span> <span class="string">"complete,failure,timeout"</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li><strong>Telegram:</strong> Bot messages with emoji-coded events</li>
+            <li><strong>Email:</strong> System sendmail with event headers</li>
+            <li><strong>Webhook:</strong> JSON POST to any URL (Slack, Discord, n8n, etc.)</li>
+            <li>Event filtering: choose which events trigger which channels</li>
+            <li><code>pipeline notify-test</code> verifies all channels with real delivery</li>
+        </ul>
+    </div>
+
+    <div class="feature-box yellow">
+        <h4>7. Cost Reporting & Budget Alerts</h4>
+        <p style="margin-bottom: 0.75rem;">Track API spend across all tasks with daily/weekly/monthly breakdowns, per-repo aggregation, and budget alerts.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="prompt">$</span> pipeline costs
+<span class="output">  Today:      $3.42
+  This Week:  $18.76
+  This Month: $45.20
+  Budget: 70% of daily $25.00
+
+  Cost by Repository:
+    $12.30   skykeep        (4 tasks)
+    $6.46    cafe-aapama    (3 tasks)
+
+  Top Tasks by Cost:
+    $4.21    009-refactor-auth    skykeep</span>
+
+<span class="comment"># Export as CSV or markdown report</span>
+<span class="prompt">$</span> pipeline costs <span class="flag">--csv</span> > costs.csv
+<span class="prompt">$</span> pipeline costs <span class="flag">--report</span> > report.md
+<span class="prompt">$</span> pipeline costs <span class="flag">--repo</span> skykeep</pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Daily budget cap with 70%/90% alerts</li>
+            <li>Per-repo cost aggregation</li>
+            <li>CSV export for spreadsheets</li>
+            <li>Markdown report generation (daily breakdown, top tasks)</li>
+            <li>Costs tracked automatically from Claude's stream-json output</li>
+        </ul>
+    </div>
 
 <!-- Architecture Diagram -->
 <section id="architecture" class="fade-in">
@@ -1048,12 +1153,13 @@ flowchart LR
 &#9500;&#9472;&#9472; <span class="dir">failed/</span>                     <span class="comment"># Failed (with explanation + resumable flag)</span>
 &#9500;&#9472;&#9472; <span class="dir">logs/</span>                       <span class="comment"># Per-task logs + global dispatcher log</span>
 &#9500;&#9472;&#9472; <span class="dir">locks/</span>                      <span class="comment"># Atomic lock files for concurrency</span>
-&#9500;&#9472;&#9472; <span class="new">state/</span>                      <span class="comment"># Session checkpointing (NEW)</span>
-&#9474;   &#9492;&#9472;&#9472; <span class="new">&lt;task-name&gt;/</span>
-&#9474;       &#9500;&#9472;&#9472; <span class="new">current.json</span>       <span class="comment"># Session ID, attempt #, budget used, resumable flag</span>
-&#9474;       &#9500;&#9472;&#9472; <span class="new">attempts.jsonl</span>     <span class="comment"># Append-only history of each attempt</span>
-&#9474;       &#9500;&#9472;&#9472; <span class="new">git-snapshot.txt</span>   <span class="comment"># Branch, commits, uncommitted changes</span>
-&#9474;       &#9492;&#9472;&#9472; <span class="new">stream-output.jsonl</span><span class="comment"># Raw Claude output (for debugging)</span>
+&#9500;&#9472;&#9472; <span class="new">state/</span>                      <span class="comment"># Session checkpointing + scheduling (NEW)</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="new">&lt;task-name&gt;/</span>
+&#9474;   &#9474;   &#9500;&#9472;&#9472; <span class="new">current.json</span>       <span class="comment"># Session ID, attempt #, budget used, resumable flag</span>
+&#9474;   &#9474;   &#9500;&#9472;&#9472; <span class="new">attempts.jsonl</span>     <span class="comment"># Append-only history of each attempt</span>
+&#9474;   &#9474;   &#9500;&#9472;&#9472; <span class="new">git-snapshot.txt</span>   <span class="comment"># Branch, commits, uncommitted changes</span>
+&#9474;   &#9474;   &#9492;&#9472;&#9472; <span class="new">stream-output.jsonl</span><span class="comment"># Raw Claude output (for debugging)</span>
+&#9474;   &#9492;&#9472;&#9472; <span class="new">.schedules/</span>            <span class="comment"># Cron schedule state (last_run timestamps)</span>
 &#9500;&#9472;&#9472; <span class="dir">templates/</span>                  <span class="comment"># Quick-start templates</span>
 &#9474;   &#9500;&#9472;&#9472; <span class="file">code.md</span>
 &#9474;   &#9500;&#9472;&#9472; <span class="file">research.md</span>
@@ -1105,6 +1211,8 @@ flowchart LR
         <tr><td><code>pipeline add "desc" --preview</code></td><td>Generate + show the task file for approval (Y/n/edit) before queuing</td></tr>
         <tr><td><code>pipeline add "desc" --dumb</code></td><td>Skip AI. Creates a minimal task file (fallback/quick mode)</td></tr>
         <tr><td><code>pipeline add "desc" --repo X --type Y</code></td><td>Provide hints to the AI (overrides inference)</td></tr>
+        <tr><td><code>pipeline add "desc" --depends-on X</code></td><td>Block until task X completes (comma-separated for multiple)</td></tr>
+        <tr><td><code>pipeline add "desc" --schedule "cron"</code></td><td>Run on a recurring cron schedule</td></tr>
         <tr><td><code>pipeline add "desc" --no-auto</code></td><td>Send to pending/ instead of queue/ (requires manual <code>pipeline run</code>)</td></tr>
         <tr><td><code>pipeline new [template]</code></td><td>Open a template (code/research/writing/general) in $EDITOR for a detailed task</td></tr>
     </table>
@@ -1133,6 +1241,11 @@ flowchart LR
         <tr><th>Command</th><th>What It Does</th></tr>
         <tr><td><code>pipeline watch</code></td><td>Start or restart the filesystem watcher</td></tr>
         <tr><td><code>pipeline stop</code></td><td>Stop the watcher process</td></tr>
+        <tr><td><code>pipeline costs [--csv|--report|--repo X]</code></td><td>Cost report: daily/weekly/monthly, per-repo, budget alerts, CSV/markdown export</td></tr>
+        <tr><td><code>pipeline deps</code></td><td>Show task dependency graph with status indicators</td></tr>
+        <tr><td><code>pipeline schedule [list|remove]</code></td><td>List or manage scheduled/recurring tasks</td></tr>
+        <tr><td><code>pipeline notify-test [channel]</code></td><td>Test notification channels (telegram/email/webhook/all)</td></tr>
+        <tr><td><code>pipeline dashboard [port]</code></td><td>Open the web dashboard (default: 7778)</td></tr>
         <tr><td><code>pipeline clean [days]</code></td><td>Remove completed/failed tasks older than N days (default: 30)</td></tr>
         <tr><td><code>pipeline help</code></td><td>Show all commands and examples</td></tr>
     </table>
@@ -1246,6 +1359,8 @@ real-time notification system.
         <tr><td><code>timeout</code></td><td>seconds</td><td>600</td><td>Kill task after this duration</td></tr>
         <tr><td><code>budget</code></td><td>USD amount</td><td>5.00</td><td>Max API spend per task</td></tr>
         <tr><td><code>branch</code></td><td>branch name</td><td>(auto-generated)</td><td>Git branch for code tasks</td></tr>
+        <tr><td><code>depends_on</code></td><td>comma-separated task names</td><td>(none)</td><td>Tasks that must complete first</td></tr>
+        <tr><td><code>schedule</code></td><td>5-field cron expression</td><td>(none)</td><td>Recurring execution schedule</td></tr>
     </table>
 </section>
 
@@ -1262,10 +1377,10 @@ real-time notification system.
     <h3>Key Source Files</h3>
     <table>
         <tr><th>File</th><th>Lines</th><th>Responsibility</th></tr>
-        <tr><td><code>bin/pipeline</code></td><td>~800</td><td>CLI interface, intelligent task generator, resume/state commands</td></tr>
-        <tr><td><code>bin/dispatcher.sh</code></td><td>~600</td><td>Execution engine: session mgmt, checkpointing, stream processing, timeout</td></tr>
-        <tr><td><code>bin/watcher.sh</code></td><td>~150</td><td>Filesystem watcher, Watchman integration, orphan detection, polling fallback</td></tr>
-        <tr><td><code>config.yml</code></td><td>~55</td><td>All configuration: repos, defaults, checkpointing, notifications</td></tr>
+        <tr><td><code>bin/pipeline</code></td><td>~1500</td><td>CLI interface, task generator, costs, deps, schedule, notify-test, state commands</td></tr>
+        <tr><td><code>bin/dispatcher.sh</code></td><td>~960</td><td>Execution engine: session mgmt, checkpointing, notifications, dependency resolution</td></tr>
+        <tr><td><code>bin/watcher.sh</code></td><td>~345</td><td>Filesystem watcher, cron scheduler, orphan detection, Watchman/polling</td></tr>
+        <tr><td><code>config.yml</code></td><td>~80</td><td>All configuration: repos, defaults, checkpointing, notifications, webhooks</td></tr>
         <tr><td><code>CLAUDE.md</code></td><td>~90</td><td>Worker persona: tells Claude how to behave autonomously + resumption rules</td></tr>
     </table>
 
@@ -1297,8 +1412,9 @@ real-time notification system.
         <tr><td>Add a new CLI command</td><td><code>bin/pipeline</code></td><td>Add <code>cmd_yourcommand()</code> function + case in router</td></tr>
         <tr><td>Add a new repo</td><td><code>config.yml</code></td><td>Add line under <code>repos:</code></td></tr>
         <tr><td>Change AI behavior</td><td><code>bin/pipeline</code> <code>_build_generator_prompt()</code></td><td>Modify the prompt given to Haiku for task generation</td></tr>
-        <tr><td>Add notifications (Slack, etc)</td><td><code>bin/dispatcher.sh</code> <code>notify()</code></td><td>Add a curl call alongside the osascript notification</td></tr>
-        <tr><td>Add task dependencies</td><td><code>bin/dispatcher.sh</code></td><td>Check frontmatter <code>depends_on:</code> before processing</td></tr>
+        <tr><td>Add notification channel</td><td><code>bin/dispatcher.sh</code> <code>notify()</code></td><td>Add <code>_notify_yourchannel()</code> + call from <code>notify()</code></td></tr>
+        <tr><td>Add new webhook event</td><td><code>config.yml</code> + dispatcher</td><td>Add event name to webhook events filter, emit from appropriate spot</td></tr>
+        <tr><td>Add frontmatter field</td><td><code>bin/dispatcher.sh</code></td><td>Parse with <code>frontmatter_get</code> in <code>process_task()</code>, act on value</td></tr>
     </table>
 </section>
 
@@ -1320,13 +1436,13 @@ real-time notification system.
             <h4>Level 3: Intelligent Task Generator &#10003;</h4>
             <p>AI-powered task file creation from plain English. Infers type, repo, priority, branch, budget. Preview mode. Graceful fallback to dumb mode.</p>
         </div>
-        <div class="roadmap-item next">
-            <h4>Level 4: Orchestration (Next)</h4>
-            <p>Task dependencies (do B after A completes), priority queue ordering, task chaining (output of one feeds into next), scheduled/recurring tasks via cron.</p>
+        <div class="roadmap-item done">
+            <h4>Level 4: Orchestration & Notifications &#10003;</h4>
+            <p>Task dependencies with auto-unblocking, scheduled/recurring tasks via cron, multi-channel notifications (Telegram/Email/Webhook), cost reporting with budget alerts, dependency graph visualization.</p>
         </div>
-        <div class="roadmap-item future">
-            <h4>Level 5: Multi-Agent & Integrations</h4>
-            <p>Agent-to-agent communication (one task spawns sub-tasks), webhook notifications (Slack/Discord), web dashboard, cost tracking and reporting across all tasks.</p>
+        <div class="roadmap-item next">
+            <h4>Level 5: Multi-Agent & Advanced Integrations (Next)</h4>
+            <p>Agent-to-agent communication (one task spawns sub-tasks), priority queue ordering, task chaining (output of one feeds into next), Slack/Discord integration bots.</p>
         </div>
         <div class="roadmap-item future">
             <h4>Level 6: Platform</h4>
@@ -1389,6 +1505,7 @@ claude <span class="flag">--resume</span> <span class="string">"a1b2c3d4-e5f6-..
   <span class="keyword">effort:</span> <span class="string">max</span>
   <span class="keyword">timeout:</span> <span class="string">600</span>
   <span class="keyword">budget:</span> <span class="string">5.00</span>
+  <span class="keyword">daily_budget:</span> <span class="string">25.00</span>    <span class="comment"># alerts when approaching</span>
 
 <span class="keyword">checkpointing:</span>
   <span class="keyword">enabled:</span> <span class="string">true</span>
@@ -1399,18 +1516,34 @@ claude <span class="flag">--resume</span> <span class="string">"a1b2c3d4-e5f6-..
 
 <span class="keyword">repos:</span>
   <span class="string">skykeep</span>: /Users/bkarki/Projects/skykeep
-  <span class="string">skykeep</span>: /Users/bkarki/Projects/skykeep
+  <span class="string">cafe-aapama</span>: /Users/bkarki/Projects/cafe-aapama
   <span class="string">pic-preview</span>: /Users/bkarki/Projects/pic-preview
 
 <span class="keyword">notifications:</span>
   <span class="keyword">enabled:</span> <span class="string">true</span>
-  <span class="keyword">sound:</span> <span class="string">Glass</span></pre>
+  <span class="keyword">sound:</span> <span class="string">Glass</span>
+  <span class="keyword">on_complete:</span> <span class="string">true</span>
+  <span class="keyword">on_failure:</span> <span class="string">true</span>
+  <span class="keyword">on_start:</span> <span class="string">false</span>
+  <span class="keyword">telegram:</span>
+    <span class="keyword">enabled:</span> <span class="string">false</span>
+    <span class="keyword">bot_token:</span> <span class="string">""</span>
+    <span class="keyword">chat_id:</span> <span class="string">""</span>
+  <span class="keyword">email:</span>
+    <span class="keyword">enabled:</span> <span class="string">false</span>
+    <span class="keyword">to:</span> <span class="string">""</span>
+    <span class="keyword">from:</span> <span class="string">claude-pipeline@localhost</span>
+  <span class="keyword">webhook:</span>
+    <span class="keyword">enabled:</span> <span class="string">false</span>
+    <span class="keyword">url:</span> <span class="string">""</span>
+    <span class="keyword">auth_header:</span> <span class="string">""</span>
+    <span class="keyword">events:</span> <span class="string">"complete,failure,timeout"</span></pre>
     </div>
 </section>
 
 <footer>
-    <p>Claude Pipeline v2.0 &mdash; Built with Claude Code, May 2026</p>
-    <p style="margin-top: 0.5rem;">~1500 lines of bash. No frameworks. No build step. Just files and intelligence.</p>
+    <p>Claude Pipeline v3.0 &mdash; Built with Claude Code, May 2026</p>
+    <p style="margin-top: 0.5rem;">~2500 lines of bash. No frameworks. No build step. Just files and intelligence.</p>
     <p style="margin-top: 0.5rem; color: var(--text-dim);">Source: <code>~/.claude-pipeline/</code> | Docs: <code>~/.claude-pipeline/docs/architecture.html</code></p>
 </footer>
 

@@ -1,0 +1,69 @@
+# Claude Pipeline Configuration
+# ~/.claude-pipeline/config.yml
+# Copy this to config.yml and fill in your values.
+
+pipeline:
+  # Maximum concurrent task executions
+  max_concurrent: 2
+  # Seconds before a lock is considered stale
+  lock_timeout_seconds: 3600
+  # Fallback poll interval when watchman isn't available
+  poll_interval_seconds: 5
+
+defaults:
+  # Claude model to use (use aliases: sonnet, opus, haiku - or full model names)
+  model: sonnet
+  # Effort level (low, medium, high, xhigh, max)
+  effort: max
+  # Timeout in seconds per task
+  timeout: 600
+  # Max USD spend per task
+  budget: 5.00
+  # Daily budget cap (alerts when approaching)
+  daily_budget: 25.00
+  # Permission mode
+  permission_mode: bypassPermissions
+
+# Session checkpointing & resumption
+checkpointing:
+  enabled: true
+  session_max_age_days: 7
+  max_attempts: 5
+  min_budget_for_resume: 0.50
+  capture_git_state: true
+  auto_resume_on_timeout: false
+
+# Map short repo names to absolute paths
+repos:
+  # my-project: /Users/you/Projects/my-project
+
+notifications:
+  enabled: true
+  sound: Glass
+  on_complete: true
+  on_failure: true
+  on_start: false
+
+  # Telegram integration
+  telegram:
+    enabled: false
+    bot_token: "YOUR_BOT_TOKEN"
+    chat_id: "YOUR_CHAT_ID"
+
+  # Email integration (uses system sendmail or SMTP)
+  email:
+    enabled: false
+    to: ""
+    from: "claude-pipeline@localhost"
+    subject_prefix: "[Pipeline]"
+
+  # Generic webhook (POST JSON to any URL)
+  webhook:
+    enabled: false
+    url: ""
+    auth_header: ""
+    events: "complete,failure,timeout"
+
+logging:
+  level: info
+  retain_days: 30

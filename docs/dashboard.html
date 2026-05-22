@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Pipeline Dashboard</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-dim: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --purple: #bc8cff;
+            --orange: #f0883e;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 1.5rem;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-meta {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--red);
+        }
+
+        .status-dot.running { background: var(--green); animation: pulse 2s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .refresh-indicator {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        /* Stats Row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .stat-card .value {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+
+        .stat-card .label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-card.active .value { color: var(--yellow); }
+        .stat-card.queue .value { color: var(--accent); }
+        .stat-card.done .value { color: var(--green); }
+        .stat-card.failed .value { color: var(--red); }
+        .stat-card.cost .value { color: var(--purple); }
+        .stat-card.pending .value { color: var(--text-dim); }
+
+        /* Panels Grid */
+        .panels {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+
+        .panel h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .panel h2 .count {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0.1rem 0.5rem;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+        }
+
+        /* Task Items */
+        .task-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            border-radius: 6px;
+            background: var(--surface-2);
+            margin-bottom: 0.5rem;
+            transition: border-color 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .task-item:hover { border-color: var(--border); }
+
+        .task-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        .task-icon.code { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+        .task-icon.research { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
+        .task-icon.review { background: rgba(240, 136, 62, 0.15); color: var(--orange); }
+        .task-icon.writing { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+        .task-icon.general { background: rgba(139, 148, 158, 0.15); color: var(--text-dim); }
+
+        .task-info { flex: 1; min-width: 0; }
+
+        .task-name {
+            font-size: 0.85rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .task-meta {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        .task-badge {
+            font-size: 0.7rem;
+            padding: 0.1rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .task-badge.success { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+        .task-badge.failed { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+        .task-badge.resumable { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+        .task-badge.running { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+
+        /* Active task animated bar */
+        .progress-bar {
+            height: 3px;
+            background: var(--surface);
+            border-radius: 2px;
+            margin-top: 0.5rem;
+            overflow: hidden;
+        }
+
+        .progress-bar .fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 2px;
+            animation: indeterminate 2s infinite;
+        }
+
+        @keyframes indeterminate {
+            0% { transform: translateX(-100%); width: 40%; }
+            50% { transform: translateX(100%); width: 60%; }
+            100% { transform: translateX(300%); width: 40%; }
+        }
+
+        /* Cost panel */
+        .cost-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .cost-row:last-child { border-bottom: none; }
+        .cost-row .cost-label { color: var(--text-dim); font-size: 0.85rem; }
+        .cost-row .cost-value { font-weight: 600; font-size: 0.85rem; }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        /* Error banner */
+        .error-banner {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--red);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--red);
+            display: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .panels { grid-template-columns: 1fr; }
+            .stats-row { grid-template-columns: repeat(3, 1fr); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Claude Pipeline</h1>
+    <div class="header-meta">
+        <div class="status-badge">
+            <div class="status-dot" id="watcher-dot"></div>
+            <span id="watcher-status">Checking...</span>
+        </div>
+        <div class="refresh-indicator" id="refresh-time">--</div>
+    </div>
+</div>
+
+<div class="error-banner" id="error-banner"></div>
+
+<!-- Stats Row -->
+<div class="stats-row">
+    <div class="stat-card active">
+        <div class="value" id="stat-active">-</div>
+        <div class="label">Active</div>
+    </div>
+    <div class="stat-card queue">
+        <div class="value" id="stat-queue">-</div>
+        <div class="label">Queued</div>
+    </div>
+    <div class="stat-card pending">
+        <div class="value" id="stat-pending">-</div>
+        <div class="label">Pending</div>
+    </div>
+    <div class="stat-card done">
+        <div class="value" id="stat-done">-</div>
+        <div class="label">Done</div>
+    </div>
+    <div class="stat-card failed">
+        <div class="value" id="stat-failed">-</div>
+        <div class="label">Failed</div>
+    </div>
+    <div class="stat-card cost">
+        <div class="value" id="stat-cost">-</div>
+        <div class="label">Today's Cost</div>
+    </div>
+</div>
+
+<!-- Panels -->
+<div class="panels">
+    <!-- Active Tasks -->
+    <div class="panel">
+        <h2>Active Tasks <span class="count" id="active-count">0</span></h2>
+        <div id="active-list">
+            <div class="empty-state">No tasks running</div>
+        </div>
+    </div>
+
+    <!-- Queue -->
+    <div class="panel">
+        <h2>Queue <span class="count" id="queue-count">0</span></h2>
+        <div id="queue-list">
+            <div class="empty-state">Queue is empty</div>
+        </div>
+    </div>
+
+    <!-- Recent Completed -->
+    <div class="panel">
+        <h2>Recent Completions <span class="count" id="done-count">0</span></h2>
+        <div id="done-list">
+            <div class="empty-state">No completed tasks yet</div>
+        </div>
+    </div>
+
+    <!-- Failed / Resumable -->
+    <div class="panel">
+        <h2>Failed / Resumable <span class="count" id="failed-count">0</span></h2>
+        <div id="failed-list">
+            <div class="empty-state">No failures</div>
+        </div>
+    </div>
+
+    <!-- Cost Summary -->
+    <div class="panel">
+        <h2>Cost Summary</h2>
+        <div id="cost-panel">
+            <div class="cost-row">
+                <span class="cost-label">Today</span>
+                <span class="cost-value" id="cost-today">$0.00</span>
+            </div>
+            <div class="cost-row">
+                <span class="cost-label">This Week</span>
+                <span class="cost-value" id="cost-week">$0.00</span>
+            </div>
+            <div class="cost-row">
+                <span class="cost-label">All Time</span>
+                <span class="cost-value" id="cost-total">$0.00</span>
+            </div>
+            <div class="cost-row">
+                <span class="cost-label">Tasks Tracked</span>
+                <span class="cost-value" id="cost-tasks">0</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const REFRESH_INTERVAL = 5000; // 5 seconds
+let lastUpdate = null;
+
+function typeIcon(type) {
+    const icons = { code: '</>', research: '?', review: '!', writing: 'A', general: '*' };
+    return icons[type] || icons.general;
+}
+
+function formatDuration(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function formatCost(usd) {
+    if (typeof usd === 'number') return `$${usd.toFixed(2)}`;
+    return `$${parseFloat(usd || 0).toFixed(2)}`;
+}
+
+function renderActiveTask(task) {
+    return `
+        <div class="task-item">
+            <div class="task-icon ${task.type}">${typeIcon(task.type)}</div>
+            <div class="task-info">
+                <div class="task-name">${task.title || task.name}</div>
+                <div class="task-meta">
+                    ${task.repo ? `<span>${task.repo}</span>` : ''}
+                    <span>${formatDuration(task.elapsed_s)}</span>
+                    <span class="task-badge running">running</span>
+                </div>
+                <div class="progress-bar"><div class="fill"></div></div>
+            </div>
+        </div>
+    `;
+}
+
+function renderQueuedTask(task) {
+    return `
+        <div class="task-item">
+            <div class="task-icon ${task.type}">${typeIcon(task.type)}</div>
+            <div class="task-info">
+                <div class="task-name">${task.title || task.name}</div>
+                <div class="task-meta">
+                    ${task.repo ? `<span>${task.repo}</span>` : ''}
+                    <span>priority: ${task.priority}</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderDoneTask(task) {
+    return `
+        <div class="task-item">
+            <div class="task-icon code">${typeIcon('code')}</div>
+            <div class="task-info">
+                <div class="task-name">${task.title || task.name}</div>
+                <div class="task-meta">
+                    <span>${formatDuration(task.duration_s)}</span>
+                    <span>${formatCost(task.cost_usd)}</span>
+                    <span class="task-badge success">done</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderFailedTask(task) {
+    const badge = task.resumable
+        ? '<span class="task-badge resumable">resumable</span>'
+        : '<span class="task-badge failed">failed</span>';
+    return `
+        <div class="task-item">
+            <div class="task-icon general">!</div>
+            <div class="task-info">
+                <div class="task-name">${task.title || task.name}</div>
+                <div class="task-meta">
+                    <span>${task.reason}</span>
+                    <span>attempt #${task.attempts}</span>
+                    ${badge}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function updateDashboard(data) {
+    // Watcher status
+    const dot = document.getElementById('watcher-dot');
+    const statusText = document.getElementById('watcher-status');
+    if (data.watcher.running) {
+        dot.classList.add('running');
+        statusText.textContent = `Watcher running (PID ${data.watcher.pid})`;
+    } else {
+        dot.classList.remove('running');
+        statusText.textContent = 'Watcher stopped';
+    }
+
+    // Stats
+    document.getElementById('stat-active').textContent = data.counts.active;
+    document.getElementById('stat-queue').textContent = data.counts.queue;
+    document.getElementById('stat-pending').textContent = data.counts.pending;
+    document.getElementById('stat-done').textContent = data.counts.done;
+    document.getElementById('stat-failed').textContent = data.counts.failed;
+    document.getElementById('stat-cost').textContent = formatCost(data.costs.today_usd);
+
+    // Active tasks
+    const activeList = document.getElementById('active-list');
+    document.getElementById('active-count').textContent = data.active_tasks.length;
+    if (data.active_tasks.length > 0) {
+        activeList.innerHTML = data.active_tasks.map(renderActiveTask).join('');
+    } else {
+        activeList.innerHTML = '<div class="empty-state">No tasks running</div>';
+    }
+
+    // Queue
+    const queueList = document.getElementById('queue-list');
+    document.getElementById('queue-count').textContent = (data.queued_tasks || []).length;
+    if (data.queued_tasks && data.queued_tasks.length > 0) {
+        queueList.innerHTML = data.queued_tasks.map(renderQueuedTask).join('');
+    } else {
+        queueList.innerHTML = '<div class="empty-state">Queue is empty</div>';
+    }
+
+    // Recent done
+    const doneList = document.getElementById('done-list');
+    document.getElementById('done-count').textContent = data.recent_done.length;
+    if (data.recent_done.length > 0) {
+        doneList.innerHTML = data.recent_done.map(renderDoneTask).join('');
+    } else {
+        doneList.innerHTML = '<div class="empty-state">No completed tasks yet</div>';
+    }
+
+    // Failed
+    const failedList = document.getElementById('failed-list');
+    document.getElementById('failed-count').textContent = data.recent_failed.length;
+    if (data.recent_failed.length > 0) {
+        failedList.innerHTML = data.recent_failed.map(renderFailedTask).join('');
+    } else {
+        failedList.innerHTML = '<div class="empty-state">No failures</div>';
+    }
+
+    // Costs
+    document.getElementById('cost-today').textContent = formatCost(data.costs.today_usd);
+    document.getElementById('cost-week').textContent = formatCost(data.costs.week_usd);
+    document.getElementById('cost-total').textContent = formatCost(data.costs.all_time_usd);
+    document.getElementById('cost-tasks').textContent = data.costs.task_count;
+
+    // Update timestamp
+    lastUpdate = new Date();
+    document.getElementById('refresh-time').textContent = `Updated ${lastUpdate.toLocaleTimeString()}`;
+
+    // Hide error
+    document.getElementById('error-banner').style.display = 'none';
+}
+
+async function fetchStatus() {
+    try {
+        const res = await fetch('status.json?' + Date.now());
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // Warn if status.json is stale (older than 30s)
+        const banner = document.getElementById('error-banner');
+        if (data.generated_at) {
+            const age = (Date.now() - new Date(data.generated_at).getTime()) / 1000;
+            if (age > 30) {
+                const mins = Math.floor(age / 60);
+                const secs = Math.floor(age % 60);
+                const ageStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                banner.textContent = `⚠️ Status data is ${ageStr} old — pipeline may not be running locally. Showing last known state.`;
+                banner.style.display = 'block';
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
+        updateDashboard(data);
+    } catch (err) {
+        const banner = document.getElementById('error-banner');
+        banner.textContent = `Failed to fetch status: ${err.message}. Is the pipeline server running?`;
+        banner.style.display = 'block';
+    }
+}
+
+// Initial fetch + auto-refresh
+fetchStatus();
+setInterval(fetchStatus, REFRESH_INTERVAL);
+</script>
+</body>
+</html>

@@ -1,0 +1,1870 @@
+#!/usr/bin/env bash
+# ~/.claude-pipeline/bin/pipeline
+# User-facing CLI for the Claude Pipeline
+# Usage: pipeline <command> [args...]
+
+set -euo pipefail
+
+# ─── Constants ────────────────────────────────────────────────────────────────
+PIPELINE_DIR="$HOME/.claude-pipeline"
+QUEUE_DIR="$PIPELINE_DIR/queue"
+PENDING_DIR="$PIPELINE_DIR/pending"
+ACTIVE_DIR="$PIPELINE_DIR/active"
+DONE_DIR="$PIPELINE_DIR/done"
+FAILED_DIR="$PIPELINE_DIR/failed"
+LOGS_DIR="$PIPELINE_DIR/logs"
+LOCKS_DIR="$PIPELINE_DIR/locks"
+STATE_DIR="$PIPELINE_DIR/state"
+TEMPLATES_DIR="$PIPELINE_DIR/templates"
+DISPATCHER="$PIPELINE_DIR/bin/dispatcher.sh"
+WATCHER="$PIPELINE_DIR/bin/watcher.sh"
+PID_FILE="$PIPELINE_DIR/locks/watcher.pid"
+CLAUDE_BIN="$HOME/.local/bin/claude"
+
+# ─── Colors ───────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m' # No Color
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+count_files() {
+    find "$1" -name "*.md" -type f 2>/dev/null | wc -l | xargs
+}
+
+task_title() {
+    local file="$1"
+    # Get first heading or filename
+    local title
+    title=$(grep -m1 "^#" "$file" 2>/dev/null | sed 's/^#*[[:space:]]*//')
+    if [[ -z "$title" ]]; then
+        title=$(basename "$file" .md)
+    fi
+    echo "$title"
+}
+
+generate_task_id() {
+    # Sequential numbering
+    local max_id=0
+    for dir in "$QUEUE_DIR" "$PENDING_DIR" "$ACTIVE_DIR" "$DONE_DIR" "$FAILED_DIR"; do
+        local files
+        files=$(find "$dir" -maxdepth 1 -name "*.md" -type f 2>/dev/null || true)
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            local num
+            num=$(basename "$f" .md | grep -oE '^[0-9]+' || echo "0")
+            # Strip leading zeros to avoid octal interpretation
+            num=$((10#$num))
+            if [[ $num -gt $max_id ]]; then
+                max_id=$num
+            fi
+        done <<< "$files"
+    done
+    printf "%03d" $((max_id + 1))
+}
+
+find_task() {
+    local name="$1"
+    # Search all directories for a matching task
+    for dir in "$QUEUE_DIR" "$PENDING_DIR" "$ACTIVE_DIR" "$DONE_DIR" "$FAILED_DIR"; do
+        # Exact match
+        if [[ -f "$dir/${name}.md" ]]; then
+            echo "$dir/${name}.md"
+            return 0
+        fi
+        # Partial match
+        local match
+        match=$(find "$dir" -name "*${name}*" -type f 2>/dev/null | head -1)
+        if [[ -n "$match" ]]; then
+            echo "$match"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_add() {
+    if [[ $# -eq 0 ]]; then
+        echo -e "${RED}Usage:${NC} pipeline add \"task description\" [--preview] [--dumb] [--repo X] [--type X] [--depends-on X]"
+        exit 1
+    fi
+
+    # Parse flags and collect description words
+    local repo="" task_type="" auto="true" model="" priority="" preview=false dumb=false depends_on="" schedule=""
+    local desc_parts=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo) repo="$2"; shift 2 ;;
+            --type) task_type="$2"; shift 2 ;;
+            --no-auto) auto="false"; shift ;;
+            --priority) priority="$2"; shift 2 ;;
+            --model) model="$2"; shift 2 ;;
+            --preview) preview=true; shift ;;
+            --dumb) dumb=true; shift ;;
+            --depends-on) depends_on="$2"; shift 2 ;;
+            --schedule) schedule="$2"; shift 2 ;;
+            *) desc_parts+=("$1"); shift ;;
+        esac
+    done
+
+    local description="${desc_parts[*]}"
+    if [[ -z "$description" ]]; then
+        echo -e "${RED}Error:${NC} No description provided."
+        exit 1
+    fi
+
+    # If --dumb or Claude unavailable, use simple generator
+    if [[ "$dumb" == "true" ]] || ! command -v "$CLAUDE_BIN" &>/dev/null; then
+        _add_dumb "$description" "$repo" "$task_type" "$auto" "$priority" "$model" "$depends_on" "$schedule"
+        return
+    fi
+
+    # Smart generation via Claude
+    _add_smart "$description" "$repo" "$task_type" "$auto" "$priority" "$model" "$preview" "$depends_on" "$schedule"
+}
+
+# ─── Smart Task Generator (AI-powered) ──────────────────────────────────────
+
+_build_generator_prompt() {
+    local hint_repo="$1" hint_type="$2" hint_priority="$3" hint_model="$4"
+
+    # Extract repos from config
+    local repos_list=""
+    if [[ -f "$PIPELINE_DIR/config.yml" ]]; then
+        repos_list=$(awk '/^repos:/,/^[^ ]/' "$PIPELINE_DIR/config.yml" | grep -E '^\s+\w' | sed 's/^\s*/  /' || true)
+    fi
+
+    local prompt="You are a task file generator for an autonomous Claude Code pipeline.
+
+Given a user's plain English description, generate a complete task .md file.
+Output ONLY the file content — no explanation, no code fences, no commentary.
+
+AVAILABLE REPOS (short name: path):
+${repos_list:-  (none configured)}
+
+TASK TYPES: code, research, review, writing, general
+
+OUTPUT FORMAT (output exactly this structure):
+---
+type: <inferred type>
+repo: <inferred repo short name, or omit line entirely if unclear>
+priority: <1-10, higher = more urgent>
+auto: true
+model: <sonnet for most tasks, opus for complex multi-file changes>
+effort: <max for thorough work, high for standard>
+timeout: <300 for quick tasks, 600 for standard, 900 for complex>
+budget: <2.00 for research/writing, 5.00 for code, 8.00 for complex code>
+branch: <suggested branch name for code tasks, omit line for non-code>
+---
+
+# <Clear, actionable title>
+
+<1-2 paragraph description expanding on user's request>
+
+## Context
+<Background info, what the user likely means, relevant details>
+
+## Acceptance Criteria
+- <Specific, testable outcome 1>
+- <Specific, testable outcome 2>
+- <Tests pass if applicable>
+
+INFERENCE RULES:
+- If the request mentions a project name matching a repo, set repo to that name
+- 'fix', 'bug', 'implement', 'add feature', 'refactor' → type: code
+- 'research', 'find out', 'compare', 'what is' → type: research
+- 'review', 'check', 'audit' → type: review
+- 'write', 'draft', 'document' → type: writing
+- Branch names: use 'fix/', 'feat/', 'refactor/' prefixes
+- Priority 1-3: low/nice-to-have, 4-6: normal, 7-8: important, 9-10: urgent/blocking"
+
+    # Add hints from explicit flags
+    if [[ -n "$hint_repo" ]]; then
+        prompt="$prompt
+
+HINT: User specified repo=$hint_repo"
+    fi
+    if [[ -n "$hint_type" ]]; then
+        prompt="$prompt
+
+HINT: User specified type=$hint_type"
+    fi
+    if [[ -n "$hint_priority" ]]; then
+        prompt="$prompt
+
+HINT: User specified priority=$hint_priority"
+    fi
+    if [[ -n "$hint_model" ]]; then
+        prompt="$prompt
+
+HINT: User specified model=$hint_model"
+    fi
+
+    echo "$prompt"
+}
+
+_add_smart() {
+    local description="$1"
+    local hint_repo="$2" hint_type="$3" hint_auto="$4" hint_priority="$5" hint_model="$6"
+    local preview="$7" depends_on="${8:-}" schedule="${9:-}"
+
+    echo -e "${CYAN}⚡ Generating task...${NC}"
+
+    # Build the generation prompt with dynamic repo knowledge
+    local system_prompt
+    system_prompt=$(_build_generator_prompt "$hint_repo" "$hint_type" "$hint_priority" "$hint_model")
+
+    # Call Claude (haiku, cheap + fast)
+    # Run from /tmp to avoid picking up any project-specific CLAUDE.md context
+    # Redirect stdin from /dev/null so piped input doesn't interfere
+    local generated=""
+    generated=$(
+        cd /tmp && "$CLAUDE_BIN" -p \
+            --model haiku \
+            --max-turns 1 \
+            --output-format text \
+            "$system_prompt
+
+USER REQUEST: $description" </dev/null 2>/dev/null
+    ) || true
+
+    # Validate output starts with ---
+    if [[ -z "$generated" || "${generated:0:3}" != "---" ]]; then
+        echo -e "${YELLOW}⚠ Smart generation failed. Falling back to simple mode.${NC}"
+        _add_dumb "$description" "$hint_repo" "$hint_type" "$hint_auto" "$hint_priority" "$hint_model" "$depends_on" "$schedule"
+        return
+    fi
+
+    # Inject depends_on and schedule into generated frontmatter if provided
+    if [[ -n "$depends_on" ]]; then
+        generated=$(echo "$generated" | awk -v dep="$depends_on" '
+            BEGIN { count=0 }
+            /^---$/ { count++ }
+            count==2 && /^---$/ { print "depends_on: " dep }
+            { print }
+        ')
+    fi
+    if [[ -n "$schedule" ]]; then
+        generated=$(echo "$generated" | awk -v sched="$schedule" '
+            BEGIN { count=0 }
+            /^---$/ { count++ }
+            count==2 && /^---$/ { print "schedule: " sched }
+            { print }
+        ')
+    fi
+
+    # Generate task ID and filename
+    local task_id slug filename
+    task_id=$(generate_task_id)
+    # Extract title from generated content for slug
+    local title
+    title=$(echo "$generated" | grep -m1 "^#" | sed 's/^#\+\s*//')
+    [[ -z "$title" ]] && title="$description"
+    slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | cut -c1-50 | sed 's/-$//')
+    filename="${task_id}-${slug}.md"
+
+    # Override auto flag if specified
+    if [[ "$hint_auto" == "false" ]]; then
+        generated=$(echo "$generated" | sed "s/^auto:.*/auto: false/")
+    fi
+
+    # Preview mode — show generated task and ask for confirmation
+    if [[ "$preview" == "true" ]]; then
+        echo ""
+        echo -e "${BOLD}─── Generated Task ─────────────────────────────${NC}"
+        echo "$generated"
+        echo -e "${BOLD}────────────────────────────────────────────────${NC}"
+        echo ""
+        read -p "Queue this task? [Y/n/e(dit)] " choice
+        case "$choice" in
+            n|N) echo "Cancelled."; return ;;
+            e|E)
+                local tmp_file="/tmp/pipeline-preview-${task_id}.md"
+                echo "$generated" > "$tmp_file"
+                "${EDITOR:-vim}" "$tmp_file"
+                generated=$(cat "$tmp_file")
+                rm -f "$tmp_file"
+                ;;
+        esac
+    fi
+
+    # Determine target directory based on auto flag in generated content
+    local target_dir="$QUEUE_DIR"
+    if echo "$generated" | sed -n '/^---$/,/^---$/p' | grep -q "^auto: false" 2>/dev/null; then
+        target_dir="$PENDING_DIR"
+    fi
+    # If has dependencies, put in pending (dispatcher will re-queue when deps are met)
+    if [[ -n "$depends_on" ]]; then
+        target_dir="$PENDING_DIR"
+    fi
+
+    # Write file
+    echo "$generated" > "$target_dir/$filename"
+
+    echo -e "${GREEN}✓${NC} Task created: ${BOLD}$filename${NC}"
+    if [[ "$target_dir" == "$QUEUE_DIR" ]]; then
+        echo -e "  ${DIM}→ Queued for auto-pickup${NC}"
+    else
+        echo -e "  ${DIM}→ In pending/ — run 'pipeline run $task_id' to execute${NC}"
+    fi
+
+    # Show inferred metadata summary
+    local inferred_type inferred_repo inferred_model
+    inferred_type=$(echo "$generated" | sed -n '/^---$/,/^---$/p' | grep "^type:" | sed 's/type:\s*//' || true)
+    inferred_repo=$(echo "$generated" | sed -n '/^---$/,/^---$/p' | grep "^repo:" | sed 's/repo:\s*//' || true)
+    inferred_model=$(echo "$generated" | sed -n '/^---$/,/^---$/p' | grep "^model:" | sed 's/model:\s*//' || true)
+    echo -e "  ${DIM}type=${inferred_type:-general}  repo=${inferred_repo:-—}  model=${inferred_model:-sonnet}${NC}"
+}
+
+# ─── Dumb Task Generator (fallback, no AI) ──────────────────────────────────
+
+_add_dumb() {
+    local description="$1"
+    local repo="${2:-}" task_type="${3:-general}" auto="${4:-true}" priority="${5:-5}" model="${6:-}" depends_on="${7:-}" schedule="${8:-}"
+
+    # Default task_type if empty
+    [[ -z "$task_type" ]] && task_type="general"
+    # Default priority if empty
+    [[ -z "$priority" ]] && priority="5"
+
+    local task_id
+    task_id=$(generate_task_id)
+    local slug
+    slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-50 | sed 's/-$//')
+    local filename="${task_id}-${slug}.md"
+
+    local target_dir="$QUEUE_DIR"
+    if [[ "$auto" == "false" ]]; then
+        target_dir="$PENDING_DIR"
+    fi
+    # If has unsatisfied dependencies, put in pending
+    if [[ -n "$depends_on" ]]; then
+        target_dir="$PENDING_DIR"
+    fi
+
+    # Generate simple task file
+    {
+        echo "---"
+        echo "type: $task_type"
+        [[ -n "$repo" ]] && echo "repo: $repo"
+        echo "priority: $priority"
+        echo "auto: $auto"
+        [[ -n "$model" ]] && echo "model: $model"
+        echo "timeout: 600"
+        echo "budget: 5.00"
+        [[ -n "$depends_on" ]] && echo "depends_on: $depends_on"
+        [[ -n "$schedule" ]] && echo "schedule: $schedule"
+        echo "---"
+        echo ""
+        echo "# $description"
+        echo ""
+    } > "$target_dir/$filename"
+
+    echo -e "${GREEN}✓${NC} Task created: ${BOLD}$filename${NC}"
+    if [[ -n "$depends_on" ]]; then
+        echo -e "  ${DIM}→ Blocked on: $depends_on${NC}"
+    elif [[ "$auto" == "true" ]]; then
+        echo -e "  ${DIM}→ Queued for auto-pickup${NC}"
+    else
+        echo -e "  ${DIM}→ In pending/ — run 'pipeline run $(echo "$task_id" | sed 's/^0*//')' to execute${NC}"
+    fi
+    if [[ -n "$schedule" ]]; then
+        echo -e "  ${DIM}→ Scheduled: $schedule${NC}"
+    fi
+}
+
+cmd_new() {
+    local template="${1:-general}"
+    local template_file="$TEMPLATES_DIR/${template}.md"
+
+    if [[ ! -f "$template_file" ]]; then
+        echo -e "${YELLOW}Available templates:${NC}"
+        ls "$TEMPLATES_DIR"/*.md 2>/dev/null | xargs -I{} basename {} .md | sed 's/^/  /'
+        echo ""
+        echo -e "${RED}Template '$template' not found.${NC}"
+        exit 1
+    fi
+
+    local task_id
+    task_id=$(generate_task_id)
+    local filename="${task_id}-new-task.md"
+    local target="$QUEUE_DIR/$filename"
+
+    cp "$template_file" "$target"
+
+    # Open in editor
+    local editor="${EDITOR:-vim}"
+    "$editor" "$target"
+
+    if [[ -f "$target" ]]; then
+        # Check if auto:false and move to pending
+        local auto
+        auto=$(sed -n '/^---$/,/^---$/p' "$target" | grep -E "^\s*auto:" | head -1 | sed 's/^[^:]*:\s*//' | xargs)
+        if [[ "$auto" == "false" ]]; then
+            mv "$target" "$PENDING_DIR/$filename"
+            echo -e "${GREEN}✓${NC} Task saved to pending/ (auto:false)"
+        else
+            echo -e "${GREEN}✓${NC} Task queued: $filename"
+        fi
+    else
+        echo -e "${YELLOW}Task creation cancelled.${NC}"
+    fi
+}
+
+cmd_run() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Usage:${NC} pipeline run <task-name>"
+        echo ""
+        echo -e "${DIM}Pending tasks:${NC}"
+        cmd_list pending
+        exit 1
+    fi
+
+    # Find in pending/
+    local task_file=""
+    if [[ -f "$PENDING_DIR/${name}.md" ]]; then
+        task_file="$PENDING_DIR/${name}.md"
+    else
+        task_file=$(find "$PENDING_DIR" -name "*${name}*" -type f 2>/dev/null | head -1)
+    fi
+
+    if [[ -z "$task_file" || ! -f "$task_file" ]]; then
+        echo -e "${RED}Task not found in pending/:${NC} $name"
+        exit 1
+    fi
+
+    # Move to queue for processing
+    mv "$task_file" "$QUEUE_DIR/"
+    local basename
+    basename=$(basename "$task_file")
+    echo -e "${GREEN}✓${NC} Task moved to queue: $basename"
+    echo -e "  ${DIM}→ Will be picked up by the watcher${NC}"
+
+    # Trigger dispatcher immediately
+    "$DISPATCHER" "$QUEUE_DIR/$basename" &
+    echo -e "  ${DIM}→ Dispatcher triggered${NC}"
+}
+
+cmd_status() {
+    echo -e "${BOLD}╔══════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║       Claude Pipeline Status         ║${NC}"
+    echo -e "${BOLD}╚══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Watcher status
+    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo -e "  Watcher: ${GREEN}● running${NC} (PID $(cat "$PID_FILE"))"
+    else
+        echo -e "  Watcher: ${RED}● stopped${NC}"
+    fi
+    echo ""
+
+    # Queue counts
+    local queue_count active_count pending_count done_count failed_count
+    queue_count=$(count_files "$QUEUE_DIR")
+    active_count=$(count_files "$ACTIVE_DIR")
+    pending_count=$(count_files "$PENDING_DIR")
+    done_count=$(count_files "$DONE_DIR")
+    failed_count=$(count_files "$FAILED_DIR")
+
+    echo -e "  ${CYAN}Queue:${NC}   $queue_count task(s) waiting"
+    echo -e "  ${YELLOW}Active:${NC}  $active_count task(s) running"
+    echo -e "  ${BLUE}Pending:${NC} $pending_count task(s) awaiting kickoff"
+    echo -e "  ${GREEN}Done:${NC}    $done_count task(s) completed"
+    echo -e "  ${RED}Failed:${NC}  $failed_count task(s) failed"
+    echo ""
+
+    # Show active tasks
+    if [[ $active_count -gt 0 ]]; then
+        echo -e "  ${BOLD}Currently running:${NC}"
+        for f in "$ACTIVE_DIR"/*.md; do
+            [[ -f "$f" ]] || continue
+            echo -e "    ${YELLOW}▶${NC} $(basename "$f" .md): $(task_title "$f")"
+        done
+        echo ""
+    fi
+
+    # Show queued tasks
+    if [[ $queue_count -gt 0 ]]; then
+        echo -e "  ${BOLD}Queued:${NC}"
+        for f in "$QUEUE_DIR"/*.md; do
+            [[ -f "$f" ]] || continue
+            echo -e "    ${CYAN}○${NC} $(basename "$f" .md): $(task_title "$f")"
+        done
+        echo ""
+    fi
+
+    # Show resumable failed tasks
+    local resumable_count=0
+    for f in "$FAILED_DIR"/*.md; do
+        [[ -f "$f" ]] || continue
+        local tname
+        tname=$(basename "$f" .md)
+        local sfile="$STATE_DIR/$tname/current.json"
+        if [[ -f "$sfile" ]] && jq -e '.resumable == true' "$sfile" >/dev/null 2>&1; then
+            resumable_count=$((resumable_count + 1))
+        fi
+    done
+
+    if [[ $resumable_count -gt 0 ]]; then
+        echo -e "  ${BOLD}Resumable (${resumable_count}):${NC}"
+        for f in "$FAILED_DIR"/*.md; do
+            [[ -f "$f" ]] || continue
+            local tname
+            tname=$(basename "$f" .md)
+            local sfile="$STATE_DIR/$tname/current.json"
+            if [[ -f "$sfile" ]] && jq -e '.resumable == true' "$sfile" >/dev/null 2>&1; then
+                local reason
+                reason=$(jq -r '.failure_reason // "unknown"' "$sfile")
+                echo -e "    ${YELLOW}↺${NC} $tname  ${DIM}($reason)${NC}"
+            fi
+        done
+        echo -e "    ${DIM}→ Run 'pipeline resume <name>' to continue${NC}"
+        echo ""
+    fi
+}
+
+cmd_list() {
+    local dir_name="${1:-all}"
+
+    list_dir() {
+        local dir="$1" label="$2" color="$3"
+        local files
+        files=$(find "$dir" -name "*.md" -type f 2>/dev/null | sort)
+        if [[ -n "$files" ]]; then
+            echo -e "\n  ${color}${BOLD}[$label]${NC}"
+            echo "$files" | while read -r f; do
+                local name title deps schedule_info
+                name=$(basename "$f" .md)
+                title=$(task_title "$f")
+                deps=$(sed -n '/^---$/,/^---$/p' "$f" 2>/dev/null | grep "^depends_on:" | sed 's/depends_on:\s*//' | xargs || true)
+                schedule_info=$(sed -n '/^---$/,/^---$/p' "$f" 2>/dev/null | grep "^schedule:" | sed 's/schedule:\s*//' | xargs || true)
+                local suffix=""
+                [[ -n "$deps" ]] && suffix="${suffix} ${YELLOW}⧗ depends: ${deps}${NC}"
+                [[ -n "$schedule_info" ]] && suffix="${suffix} ${PURPLE}⏱ ${schedule_info}${NC}"
+                echo -e "    $name  ${DIM}$title${NC}${suffix}"
+            done
+        fi
+    }
+
+    case "$dir_name" in
+        queue)   list_dir "$QUEUE_DIR" "Queue" "$CYAN" ;;
+        active)  list_dir "$ACTIVE_DIR" "Active" "$YELLOW" ;;
+        pending) list_dir "$PENDING_DIR" "Pending" "$BLUE" ;;
+        done)    list_dir "$DONE_DIR" "Done" "$GREEN" ;;
+        failed)  list_dir "$FAILED_DIR" "Failed" "$RED" ;;
+        all)
+            list_dir "$ACTIVE_DIR" "Active" "$YELLOW"
+            list_dir "$QUEUE_DIR" "Queue" "$CYAN"
+            list_dir "$PENDING_DIR" "Pending" "$BLUE"
+            list_dir "$DONE_DIR" "Done" "$GREEN"
+            list_dir "$FAILED_DIR" "Failed" "$RED"
+            ;;
+        *)
+            echo -e "${RED}Unknown directory:${NC} $dir_name"
+            echo "Options: queue, active, pending, done, failed, all"
+            exit 1
+            ;;
+    esac
+    echo ""
+}
+
+cmd_view() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Usage:${NC} pipeline view <task-name>"
+        exit 1
+    fi
+
+    local task_file
+    if ! task_file=$(find_task "$name"); then
+        echo -e "${RED}Task not found:${NC} $name"
+        exit 1
+    fi
+
+    local dir_label
+    dir_label=$(basename "$(dirname "$task_file")")
+
+    echo -e "${BOLD}Task:${NC} $(basename "$task_file" .md)"
+    echo -e "${BOLD}Location:${NC} $dir_label/"
+    echo -e "${BOLD}─────────────────────────────────────${NC}"
+    cat "$task_file"
+    echo ""
+
+    # Show log if exists
+    local log_file
+    log_file=$(find "$LOGS_DIR" -name "$(basename "$task_file" .md)*" -type f 2>/dev/null | sort | tail -1)
+    if [[ -n "$log_file" && -f "$log_file" ]]; then
+        echo -e "${BOLD}─────────────────────────────────────${NC}"
+        echo -e "${BOLD}Log:${NC} $log_file"
+        echo -e "${BOLD}─────────────────────────────────────${NC}"
+        cat "$log_file"
+    fi
+}
+
+cmd_retry() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Usage:${NC} pipeline retry <task-name>"
+        echo -e "${DIM}  (Fresh restart from scratch. Use 'pipeline resume' to continue where it left off.)${NC}"
+        exit 1
+    fi
+
+    local task_file=""
+    if [[ -f "$FAILED_DIR/${name}.md" ]]; then
+        task_file="$FAILED_DIR/${name}.md"
+    else
+        task_file=$(find "$FAILED_DIR" -name "*${name}*" -type f 2>/dev/null | head -1)
+    fi
+
+    if [[ -z "$task_file" || ! -f "$task_file" ]]; then
+        echo -e "${RED}Task not found in failed/:${NC} $name"
+        exit 1
+    fi
+
+    # Remove resume_session to force fresh execution
+    sed -i '' '/^resume_session:/d' "$task_file"
+
+    mv "$task_file" "$QUEUE_DIR/"
+    echo -e "${GREEN}✓${NC} Task re-queued (fresh start): $(basename "$task_file")"
+    echo -e "  ${DIM}→ Previous session discarded. Will execute from scratch.${NC}"
+}
+
+cmd_resume() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Usage:${NC} pipeline resume <task-name>"
+        echo ""
+        echo -e "  ${DIM}Resume an interrupted task using its saved session.${NC}"
+        echo -e "  ${DIM}Claude picks up exactly where it left off.${NC}"
+        echo ""
+
+        # Show resumable tasks
+        local has_resumable=false
+        echo -e "  ${BOLD}Resumable tasks:${NC}"
+        for f in "$FAILED_DIR"/*.md; do
+            [[ -f "$f" ]] || continue
+            local tname
+            tname=$(basename "$f" .md)
+            local state_file="$STATE_DIR/$tname/current.json"
+            if [[ -f "$state_file" ]] && jq -e '.resumable == true' "$state_file" >/dev/null 2>&1; then
+                local sid att
+                sid=$(jq -r '.session_id' "$state_file")
+                att=$(jq -r '.attempt' "$state_file")
+                local reason
+                reason=$(jq -r '.failure_reason // "unknown"' "$state_file")
+                echo -e "    ${YELLOW}↺${NC} $tname  ${DIM}(attempt $att, reason: $reason, session: ${sid:0:8}...)${NC}"
+                has_resumable=true
+            fi
+        done
+
+        if [[ "$has_resumable" == "false" ]]; then
+            echo -e "    ${DIM}(none)${NC}"
+        fi
+        exit 1
+    fi
+
+    # Find task in failed/
+    local task_file=""
+    if [[ -f "$FAILED_DIR/${name}.md" ]]; then
+        task_file="$FAILED_DIR/${name}.md"
+    else
+        task_file=$(find "$FAILED_DIR" -name "*${name}*" -type f 2>/dev/null | head -1)
+    fi
+
+    if [[ -z "$task_file" || ! -f "$task_file" ]]; then
+        echo -e "${RED}Task not found in failed/:${NC} $name"
+        echo -e "${DIM}Tip: Use 'pipeline list failed' to see available tasks.${NC}"
+        exit 1
+    fi
+
+    local task_name
+    task_name=$(basename "$task_file" .md)
+    local state_file="$STATE_DIR/$task_name/current.json"
+
+    if [[ -f "$state_file" ]] && jq -e '.resumable == true' "$state_file" >/dev/null 2>&1; then
+        local session_id
+        session_id=$(jq -r '.session_id' "$state_file")
+        local attempt
+        attempt=$(jq -r '.attempt' "$state_file")
+        echo -e "${GREEN}✓${NC} Resuming with session ${CYAN}${session_id:0:8}...${NC} (will be attempt $((attempt + 1)))"
+
+        # Ensure resume_session is in frontmatter
+        if grep -q "^resume_session:" <(sed -n '/^---$/,/^---$/p' "$task_file"); then
+            sed -i '' "s/^resume_session:.*/resume_session: $session_id/" "$task_file"
+        else
+            # Insert before closing ---
+            awk -v sid="$session_id" '
+                BEGIN { count=0 }
+                /^---$/ { count++ }
+                count==2 && /^---$/ { print "resume_session: " sid }
+                { print }
+            ' "$task_file" > "${task_file}.tmp" && mv "${task_file}.tmp" "$task_file"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC}  No valid session state found. Will use context reconstruction."
+        echo -e "  ${DIM}(git state + previous logs will be injected as context)${NC}"
+
+        # Still mark for resume attempt — dispatcher will detect invalid session and reconstruct
+        if ! grep -q "^resume_session:" <(sed -n '/^---$/,/^---$/p' "$task_file" 2>/dev/null); then
+            awk '
+                BEGIN { count=0 }
+                /^---$/ { count++ }
+                count==2 && /^---$/ { print "resume_session: reconstruct" }
+                { print }
+            ' "$task_file" > "${task_file}.tmp" && mv "${task_file}.tmp" "$task_file"
+        fi
+    fi
+
+    # Move to queue for processing
+    mv "$task_file" "$QUEUE_DIR/"
+    local basename_file
+    basename_file=$(basename "$task_file")
+    echo -e "${GREEN}✓${NC} Task re-queued for resumption: ${BOLD}$basename_file${NC}"
+
+    # Trigger dispatcher immediately
+    "$DISPATCHER" "$QUEUE_DIR/$basename_file" &
+    disown
+    echo -e "  ${DIM}→ Dispatcher triggered${NC}"
+}
+
+cmd_state() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Usage:${NC} pipeline state <task-name>"
+        echo ""
+        echo -e "  ${DIM}View checkpoint state for a task (session info, attempts, git state).${NC}"
+        exit 1
+    fi
+
+    # Find the task name
+    local task_name=""
+    for dir in "$ACTIVE_DIR" "$FAILED_DIR" "$DONE_DIR" "$QUEUE_DIR" "$PENDING_DIR"; do
+        if [[ -f "$dir/${name}.md" ]]; then
+            task_name="$name"
+            break
+        fi
+        local match
+        match=$(find "$dir" -name "*${name}*" -type f 2>/dev/null | head -1)
+        if [[ -n "$match" ]]; then
+            task_name=$(basename "$match" .md)
+            break
+        fi
+    done
+
+    if [[ -z "$task_name" ]]; then
+        # Maybe the state dir exists even without a task file
+        task_name="$name"
+    fi
+
+    local state_dir="$STATE_DIR/$task_name"
+    local state_file="$state_dir/current.json"
+
+    if [[ ! -f "$state_file" ]]; then
+        echo -e "${RED}No state found for:${NC} $task_name"
+        echo -e "${DIM}State is created when a task starts executing with session persistence.${NC}"
+        exit 1
+    fi
+
+    echo -e "${BOLD}╔══════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║      Task Checkpoint State           ║${NC}"
+    echo -e "${BOLD}╚══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Core state
+    echo -e "  ${BOLD}Task:${NC}      $task_name"
+    local sid status att budget_used resumable reason
+    sid=$(jq -r '.session_id' "$state_file")
+    status=$(jq -r '.status' "$state_file")
+    att=$(jq -r '.attempt' "$state_file")
+    budget_used=$(jq -r '.budget_used' "$state_file")
+    resumable=$(jq -r '.resumable' "$state_file")
+    reason=$(jq -r '.failure_reason // "none"' "$state_file")
+
+    # Color status
+    local status_color="$NC"
+    case "$status" in
+        running)   status_color="$YELLOW" ;;
+        completed) status_color="$GREEN" ;;
+        interrupted|timeout|failed) status_color="$RED" ;;
+    esac
+
+    echo -e "  ${BOLD}Status:${NC}    ${status_color}${status}${NC}"
+    echo -e "  ${BOLD}Session:${NC}   ${CYAN}$sid${NC}"
+    echo -e "  ${BOLD}Attempt:${NC}   $att"
+    echo -e "  ${BOLD}Budget:${NC}    \$$budget_used used"
+    echo -e "  ${BOLD}Resumable:${NC} $resumable"
+    if [[ "$reason" != "none" ]]; then
+        echo -e "  ${BOLD}Failure:${NC}   $reason"
+    fi
+    echo ""
+
+    # Attempt history
+    if [[ -f "$state_dir/attempts.jsonl" ]]; then
+        echo -e "  ${BOLD}Attempt History:${NC}"
+        while IFS= read -r line; do
+            local a_num a_mode a_exit a_dur a_ts exit_icon
+            a_num=$(echo "$line" | jq -r '.attempt')
+            a_mode=$(echo "$line" | jq -r '.mode')
+            a_exit=$(echo "$line" | jq -r '.exit_code')
+            a_dur=$(echo "$line" | jq -r '.duration')
+            a_ts=$(echo "$line" | jq -r '.timestamp')
+            if [[ "$a_exit" == "0" ]]; then
+                exit_icon="\033[0;32m✓\033[0m"
+            else
+                exit_icon="\033[0;31m✗\033[0m"
+            fi
+            echo -e "    \033[2m#$a_num\033[0m $exit_icon  mode=$a_mode  exit=$a_exit  ${a_dur}s  $a_ts"
+        done < "$state_dir/attempts.jsonl"
+        echo ""
+    fi
+
+    # Git snapshot
+    if [[ -f "$state_dir/git-snapshot.txt" ]]; then
+        echo -e "  ${BOLD}Last Git Snapshot:${NC}"
+        sed 's/^/    /' "$state_dir/git-snapshot.txt"
+        echo ""
+    fi
+}
+
+cmd_logs() {
+    local name="${1:-}"
+
+    if [[ -z "$name" ]]; then
+        # Show latest global log
+        echo -e "${BOLD}Global dispatcher log:${NC}"
+        tail -30 "$LOGS_DIR/dispatcher.log" 2>/dev/null || echo "(empty)"
+        return
+    fi
+
+    local log_file
+    log_file=$(find "$LOGS_DIR" -name "*${name}*" -type f 2>/dev/null | sort | tail -1)
+    if [[ -n "$log_file" && -f "$log_file" ]]; then
+        echo -e "${BOLD}Log:${NC} $log_file"
+        echo "─────────────────────────────────────"
+        cat "$log_file"
+    else
+        echo -e "${YELLOW}No log found for:${NC} $name"
+    fi
+}
+
+_launchctl_load() {
+    local label="$1" plist="$2"
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null \
+        || launchctl load "$plist" 2>/dev/null || true
+}
+
+_launchctl_unload() {
+    local label="$1" plist="$2"
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null \
+        || launchctl unload "$plist" 2>/dev/null || true
+}
+
+cmd_watch() {
+    # Start/restart watcher via launchd (preferred) or directly
+    local plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.plist"
+    if [[ -f "$plist" ]]; then
+        echo -e "${CYAN}Starting watcher via launchd...${NC}"
+        _launchctl_load "com.bkarki.claude-pipeline" "$plist"
+        sleep 2
+        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} Watcher started via launchd (PID $(cat "$PID_FILE"))"
+        else
+            echo -e "${YELLOW}⚠${NC} launchd loaded — watcher may take a moment. Check: pipeline status"
+        fi
+    else
+        # Fallback: direct launch
+        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            echo -e "${YELLOW}Watcher already running${NC} (PID $(cat "$PID_FILE")). Restarting..."
+            kill "$(cat "$PID_FILE")" 2>/dev/null || true
+            sleep 1
+        fi
+        nohup "$WATCHER" >> "$LOGS_DIR/watcher.log" 2>&1 &
+        disown
+        sleep 1
+        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} Watcher started (PID $(cat "$PID_FILE"))"
+        else
+            echo -e "${RED}✗${NC} Watcher failed to start. Check $LOGS_DIR/watcher.log"
+        fi
+    fi
+}
+
+cmd_stop() {
+    local plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.plist"
+    if [[ -f "$plist" ]]; then
+        _launchctl_unload "com.bkarki.claude-pipeline" "$plist"
+        rm -f "$PID_FILE"
+        echo -e "${GREEN}✓${NC} Watcher stopped (via launchd)"
+    elif [[ -f "$PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid"
+            echo -e "${GREEN}✓${NC} Watcher stopped (PID $pid)"
+        else
+            echo -e "${YELLOW}Watcher was not running${NC} (stale PID file)"
+            rm -f "$PID_FILE"
+        fi
+    else
+        echo -e "${YELLOW}Watcher is not running${NC}"
+    fi
+}
+
+# Start all pipeline services (watcher + dashboard + telegram)
+cmd_up() {
+    echo -e "${BOLD}Starting all pipeline services...${NC}"
+    echo ""
+
+    local watcher_plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.plist"
+    local dashboard_plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.dashboard.plist"
+    local telegram_plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.telegram.plist"
+
+    # Watcher
+    echo -n "  Watcher:   "
+    if [[ -f "$watcher_plist" ]]; then
+        _launchctl_load "com.bkarki.claude-pipeline" "$watcher_plist"
+        sleep 1
+        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            echo -e "${GREEN}● running${NC} (PID $(cat "$PID_FILE"))"
+        else
+            echo -e "${YELLOW}● loading...${NC} (check: pipeline status)"
+        fi
+    else
+        echo -e "${RED}✗ plist not found${NC} — run: pipeline install"
+    fi
+
+    # Dashboard
+    echo -n "  Dashboard: "
+    if [[ -f "$dashboard_plist" ]]; then
+        _launchctl_load "com.bkarki.claude-pipeline.dashboard" "$dashboard_plist"
+        sleep 1
+        local dash_pid
+        dash_pid=$(pgrep -f "api-server.py" 2>/dev/null | head -1 || true)
+        if [[ -n "$dash_pid" ]]; then
+            echo -e "${GREEN}● running${NC} (PID $dash_pid) — http://localhost:7778"
+        else
+            echo -e "${YELLOW}● loading...${NC} (check: http://localhost:7778)"
+        fi
+    else
+        echo -e "${RED}✗ plist not found${NC} — run: pipeline install"
+    fi
+
+    # Telegram bot
+    echo -n "  Telegram:  "
+    if [[ -f "$telegram_plist" ]]; then
+        _launchctl_load "com.bkarki.claude-pipeline.telegram" "$telegram_plist"
+        sleep 1
+        local tg_pid_file="$LOCKS_DIR/telegram-bot.pid"
+        if [[ -f "$tg_pid_file" ]] && kill -0 "$(cat "$tg_pid_file")" 2>/dev/null; then
+            echo -e "${GREEN}● running${NC} (PID $(cat "$tg_pid_file"))"
+        else
+            echo -e "${YELLOW}● loading...${NC} (check: pipeline telegram status)"
+        fi
+    else
+        echo -e "${RED}✗ plist not found${NC} — run: pipeline install"
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓${NC} All services started. Dashboard: ${CYAN}http://localhost:7778${NC}"
+}
+
+# Stop all pipeline services
+cmd_down() {
+    echo -e "${BOLD}Stopping all pipeline services...${NC}"
+    echo ""
+
+    local watcher_plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.plist"
+    local dashboard_plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.dashboard.plist"
+    local telegram_plist="$HOME/Library/LaunchAgents/com.bkarki.claude-pipeline.telegram.plist"
+
+    echo -n "  Watcher:   "
+    _launchctl_unload "com.bkarki.claude-pipeline" "$watcher_plist" 2>/dev/null || true
+    pkill -f "watcher.sh" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    echo -e "${GREEN}✓ stopped${NC}"
+
+    echo -n "  Dashboard: "
+    _launchctl_unload "com.bkarki.claude-pipeline.dashboard" "$dashboard_plist" 2>/dev/null || true
+    pkill -f "api-server.py" 2>/dev/null || true
+    rm -f "$LOCKS_DIR/dashboard.pid"
+    echo -e "${GREEN}✓ stopped${NC}"
+
+    echo -n "  Telegram:  "
+    _launchctl_unload "com.bkarki.claude-pipeline.telegram" "$telegram_plist" 2>/dev/null || true
+    pkill -f "telegram-bot.sh" 2>/dev/null || true
+    rm -f "$LOCKS_DIR/telegram-bot.pid"
+    echo -e "${GREEN}✓ stopped${NC}"
+
+    echo ""
+    echo -e "${GREEN}✓${NC} All pipeline services stopped."
+}
+
+# Install launchd plists to ~/Library/LaunchAgents
+cmd_install() {
+    local launchd_dir="$PIPELINE_DIR/launchd"
+    local agents_dir="$HOME/Library/LaunchAgents"
+    local installed=0
+
+    echo -e "${BOLD}Installing pipeline launchd services...${NC}"
+    echo ""
+
+    for plist in "$launchd_dir"/com.bkarki.claude-pipeline*.plist; do
+        [[ -f "$plist" ]] || continue
+        local name
+        name=$(basename "$plist")
+        cp "$plist" "$agents_dir/$name"
+        echo -e "  ${GREEN}✓${NC} Installed $name"
+        installed=$((installed + 1))
+    done
+
+    if [[ $installed -eq 0 ]]; then
+        echo -e "${RED}No plist files found in $launchd_dir${NC}"
+        exit 1
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓${NC} $installed service(s) installed. Run: ${CYAN}pipeline up${NC} to start them."
+}
+
+# ─── Telegram Bot Commands ───────────────────────────────────────────────────
+TELEGRAM_BOT="$PIPELINE_DIR/bin/telegram-bot.sh"
+TELEGRAM_PID_FILE="$PIPELINE_DIR/locks/telegram-bot.pid"
+TELEGRAM_LOG_FILE="$PIPELINE_DIR/logs/telegram-bot.log"
+
+cmd_telegram() {
+    local action="${1:-status}"
+
+    case "$action" in
+        start)
+            _telegram_start
+            ;;
+        stop)
+            _telegram_stop
+            ;;
+        restart)
+            _telegram_stop 2>/dev/null || true
+            sleep 1
+            _telegram_start
+            ;;
+        status)
+            _telegram_status
+            ;;
+        logs)
+            if [[ -f "$TELEGRAM_LOG_FILE" ]]; then
+                tail -30 "$TELEGRAM_LOG_FILE"
+            else
+                echo -e "${YELLOW}No telegram bot log file found.${NC}"
+            fi
+            ;;
+        *)
+            echo -e "${RED}Usage:${NC} pipeline telegram [start|stop|restart|status|logs]"
+            exit 1
+            ;;
+    esac
+}
+
+_telegram_start() {
+    # Check if already running
+    if [[ -f "$TELEGRAM_PID_FILE" ]] && kill -0 "$(cat "$TELEGRAM_PID_FILE")" 2>/dev/null; then
+        echo -e "${YELLOW}Telegram bot already running${NC} (PID $(cat "$TELEGRAM_PID_FILE")). Restarting..."
+        kill "$(cat "$TELEGRAM_PID_FILE")" 2>/dev/null || true
+        sleep 1
+    fi
+
+    nohup "$TELEGRAM_BOT" >> "$TELEGRAM_LOG_FILE" 2>&1 &
+    disown
+    sleep 2
+
+    if [[ -f "$TELEGRAM_PID_FILE" ]] && kill -0 "$(cat "$TELEGRAM_PID_FILE")" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Telegram bot started (PID $(cat "$TELEGRAM_PID_FILE"))"
+    else
+        echo -e "${RED}✗${NC} Telegram bot failed to start. Check: pipeline telegram logs"
+    fi
+}
+
+_telegram_stop() {
+    if [[ -f "$TELEGRAM_PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$TELEGRAM_PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid"
+            echo -e "${GREEN}✓${NC} Telegram bot stopped (PID $pid)"
+        else
+            echo -e "${YELLOW}Telegram bot was not running${NC} (stale PID file)"
+            rm -f "$TELEGRAM_PID_FILE"
+        fi
+    else
+        echo -e "${YELLOW}Telegram bot is not running${NC}"
+    fi
+}
+
+_telegram_status() {
+    if [[ -f "$TELEGRAM_PID_FILE" ]] && kill -0 "$(cat "$TELEGRAM_PID_FILE")" 2>/dev/null; then
+        echo -e "${GREEN}●${NC} Telegram bot is ${GREEN}running${NC} (PID $(cat "$TELEGRAM_PID_FILE"))"
+        if [[ -f "$TELEGRAM_LOG_FILE" ]]; then
+            echo -e "  ${DIM}Last activity:${NC}"
+            tail -3 "$TELEGRAM_LOG_FILE" | sed 's/^/    /'
+        fi
+    else
+        echo -e "${RED}●${NC} Telegram bot is ${RED}not running${NC}"
+        echo -e "  Start with: ${CYAN}pipeline telegram start${NC}"
+    fi
+}
+
+cmd_clean() {
+    local days="${1:-30}"
+    local cleaned=0
+
+    # Archive old done/failed tasks
+    for dir in "$DONE_DIR" "$FAILED_DIR"; do
+        find "$dir" -name "*.md" -type f -mtime +"$days" 2>/dev/null | while read -r f; do
+            rm -f "$f"
+            ((cleaned++)) || true
+        done
+    done
+
+    # Clean old logs
+    find "$LOGS_DIR" -name "*.log" -type f -mtime +"$days" ! -name "dispatcher.log" ! -name "watcher.log" 2>/dev/null -delete
+
+    echo -e "${GREEN}✓${NC} Cleaned tasks older than $days days."
+}
+
+cmd_dispatch() {
+    # Manually trigger the dispatcher (process queue now)
+    echo -e "${CYAN}Triggering dispatcher...${NC}"
+    "$DISPATCHER"
+    echo -e "${GREEN}✓${NC} Dispatcher run complete."
+}
+
+cmd_dashboard() {
+    local port="${1:-7778}"
+    local pid_file="$LOCKS_DIR/dashboard.pid"
+    local serve_script="$PIPELINE_DIR/bin/serve-dashboard.sh"
+
+    # Start server if not running
+    if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+        echo -e "${GREEN}●${NC} Dashboard already running at ${CYAN}http://localhost:$port${NC}"
+    else
+        echo -e "${CYAN}Starting dashboard server...${NC}"
+        "$serve_script" "$port"
+    fi
+
+    # Regenerate status
+    "$PIPELINE_DIR/bin/generate-status.sh" 2>/dev/null &
+
+    # Open in browser
+    open "http://localhost:$port"
+    echo -e "${GREEN}✓${NC} Opened ${CYAN}http://localhost:$port${NC} in browser"
+}
+
+cmd_notify_test() {
+    local channel="${1:-all}"
+
+    echo -e "${BOLD}Testing notification channels...${NC}"
+    echo ""
+
+    local config_file="$PIPELINE_DIR/config.yml"
+
+    # ─── macOS Native ──
+    echo -n "  macOS notification: "
+    if osascript -e 'display notification "Test from Claude Pipeline" with title "Pipeline: Test" sound name "Glass"' 2>/dev/null; then
+        echo -e "${GREEN}✓ sent${NC}"
+    else
+        echo -e "${RED}✗ failed${NC}"
+    fi
+
+    # ─── Telegram ──
+    if [[ "$channel" == "all" || "$channel" == "telegram" ]]; then
+        echo -n "  Telegram: "
+        local tg_enabled tg_token tg_chat_id
+        tg_enabled=$(grep -A 5 "telegram:" "$config_file" 2>/dev/null | grep "enabled:" | head -1 | sed 's/.*enabled:\s*//' | tr -d '[:space:]')
+        tg_token=$(grep -A 5 "telegram:" "$config_file" 2>/dev/null | grep "bot_token:" | head -1 | sed 's/.*bot_token:\s*//' | tr -d '"' | tr -d '[:space:]')
+        tg_chat_id=$(grep -A 5 "telegram:" "$config_file" 2>/dev/null | grep "chat_id:" | head -1 | sed 's/.*chat_id:\s*//' | tr -d '"' | tr -d '[:space:]')
+
+        if [[ "$tg_enabled" != "true" ]]; then
+            echo -e "${DIM}skipped (disabled in config)${NC}"
+        elif [[ -z "$tg_token" || -z "$tg_chat_id" ]]; then
+            echo -e "${YELLOW}⚠ not configured${NC} (set telegram.bot_token and telegram.chat_id)"
+        else
+            local response
+            response=$(curl -s -X POST "https://api.telegram.org/bot${tg_token}/sendMessage" \
+                -d "chat_id=${tg_chat_id}" \
+                -d "text=🧪 *Pipeline Test*%0AThis is a test notification from Claude Pipeline.%0A_$(date '+%Y-%m-%d %H:%M')_" \
+                -d "parse_mode=Markdown" 2>&1)
+            if echo "$response" | jq -e '.ok' >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ sent${NC}"
+            else
+                local err
+                err=$(echo "$response" | jq -r '.description // "unknown error"' 2>/dev/null)
+                echo -e "${RED}✗ failed: $err${NC}"
+            fi
+        fi
+    fi
+
+    # ─── Email ──
+    if [[ "$channel" == "all" || "$channel" == "email" ]]; then
+        echo -n "  Email: "
+        local em_enabled em_to em_from em_prefix
+        em_enabled=$(grep -A 5 "email:" "$config_file" 2>/dev/null | grep "enabled:" | head -1 | sed 's/.*enabled:\s*//' | xargs 2>/dev/null || true)
+        em_to=$(grep -A 5 "email:" "$config_file" 2>/dev/null | grep "to:" | head -1 | sed 's/.*to:\s*//' | sed 's/^"//' | sed 's/"$//' | xargs 2>/dev/null || true)
+        em_from=$(grep -A 5 "email:" "$config_file" 2>/dev/null | grep "from:" | head -1 | sed 's/.*from:\s*//' | sed 's/^"//' | sed 's/"$//' | xargs 2>/dev/null || true)
+        em_prefix=$(grep -A 5 "email:" "$config_file" 2>/dev/null | grep "subject_prefix:" | head -1 | sed 's/.*subject_prefix:\s*//' | sed 's/^"//' | sed 's/"$//' | xargs 2>/dev/null || true)
+        em_from="${em_from:-claude-pipeline@localhost}"
+        em_prefix="${em_prefix:-[Pipeline]}"
+
+        if [[ "$em_enabled" != "true" ]]; then
+            echo -e "${DIM}skipped (disabled in config)${NC}"
+        elif [[ -z "$em_to" ]]; then
+            echo -e "${YELLOW}⚠ not configured${NC} (set email.to)"
+        else
+            if {
+                echo "From: $em_from"
+                echo "To: $em_to"
+                echo "Subject: $em_prefix Test Notification"
+                echo "Content-Type: text/plain; charset=utf-8"
+                echo ""
+                echo "This is a test notification from Claude Pipeline."
+                echo ""
+                echo "If you received this, email notifications are working."
+                echo ""
+                echo "---"
+                echo "Claude Pipeline | $(date)"
+            } | /usr/sbin/sendmail "$em_to" 2>/dev/null; then
+                echo -e "${GREEN}✓ sent to $em_to${NC}"
+            else
+                echo -e "${RED}✗ sendmail failed${NC} (is sendmail/postfix configured?)"
+            fi
+        fi
+    fi
+
+    # ─── Webhook ──
+    if [[ "$channel" == "all" || "$channel" == "webhook" ]]; then
+        echo -n "  Webhook: "
+        local wh_enabled wh_url wh_auth
+        wh_enabled=$(grep -A 6 "webhook:" "$config_file" 2>/dev/null | grep "enabled:" | head -1 | sed 's/.*enabled:\s*//' | xargs 2>/dev/null || true)
+        wh_url=$(grep -A 6 "webhook:" "$config_file" 2>/dev/null | grep "url:" | head -1 | sed 's/.*url:\s*//' | sed 's/^"//' | sed 's/"$//' | xargs 2>/dev/null || true)
+        wh_auth=$(grep -A 6 "webhook:" "$config_file" 2>/dev/null | grep "auth_header:" | head -1 | sed 's/.*auth_header:\s*//' | sed 's/^"//' | sed 's/"$//' | xargs 2>/dev/null || true)
+
+        if [[ "$wh_enabled" != "true" ]]; then
+            echo -e "${DIM}skipped (disabled in config)${NC}"
+        elif [[ -z "$wh_url" ]]; then
+            echo -e "${YELLOW}⚠ not configured${NC} (set webhook.url)"
+        else
+            local payload
+            payload=$(jq -n \
+                --arg event "test" \
+                --arg title "Pipeline: Test" \
+                --arg message "Test notification from Claude Pipeline" \
+                --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --arg hostname "$(hostname)" \
+                '{event: $event, title: $title, message: $message, timestamp: $timestamp, hostname: $hostname, source: "claude-pipeline"}')
+
+            local curl_args=(-s -o /dev/null -w "%{http_code}" -X POST "$wh_url" -H "Content-Type: application/json" -d "$payload" --max-time 10)
+            if [[ -n "$wh_auth" ]]; then
+                curl_args+=(-H "Authorization: $wh_auth")
+            fi
+
+            local http_code
+            http_code=$(curl "${curl_args[@]}" 2>/dev/null || echo "000")
+            if [[ "$http_code" =~ ^2 ]]; then
+                echo -e "${GREEN}✓ sent (HTTP $http_code)${NC}"
+            else
+                echo -e "${RED}✗ failed (HTTP $http_code)${NC}"
+            fi
+        fi
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Configure channels in: $config_file${NC}"
+}
+
+cmd_costs() {
+    # Parse flags
+    local csv_mode=false report_mode=false repo_filter=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --csv) csv_mode=true; shift ;;
+            --report) report_mode=true; shift ;;
+            --repo) repo_filter="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    # ─── Gather Data ──────────────────────────────────────────────────────
+    local total_cost=0 today_cost=0 week_cost=0 month_cost=0 task_count=0
+    local today week_ago month_ago
+    today=$(date +%Y-%m-%d)
+    week_ago=$(date -v-7d +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
+    month_ago=$(date -v-30d +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
+
+    # Per-repo tracking (associative arrays via temp files)
+    local repo_costs_file
+    repo_costs_file=$(mktemp)
+    local all_tasks_file
+    all_tasks_file=$(mktemp)
+    trap "rm -f '$repo_costs_file' '$all_tasks_file'" RETURN
+
+    for state_file in "$STATE_DIR"/*/current.json; do
+        [[ -f "$state_file" ]] || continue
+        local cost started_at work_dir task_repo
+        cost=$(jq -r '.budget_used // 0' "$state_file" 2>/dev/null)
+        started_at=$(jq -r '.started_at // ""' "$state_file" 2>/dev/null)
+        work_dir=$(jq -r '.work_dir // ""' "$state_file" 2>/dev/null)
+
+        [[ "$cost" == "0" || "$cost" == "null" || -z "$cost" ]] && continue
+
+        # Determine repo from work_dir
+        task_repo=$(basename "$work_dir" 2>/dev/null)
+        [[ "$task_repo" == "bkarki" ]] && task_repo="(pipeline)"
+
+        # Apply repo filter
+        if [[ -n "$repo_filter" && "$task_repo" != *"$repo_filter"* ]]; then
+            continue
+        fi
+
+        local name
+        name=$(basename "$(dirname "$state_file")")
+        echo "$cost $name $started_at $task_repo" >> "$all_tasks_file"
+
+        total_cost=$(echo "$total_cost + $cost" | bc 2>/dev/null || echo "$total_cost")
+        task_count=$((task_count + 1))
+
+        # Aggregate per-repo
+        echo "$cost $task_repo" >> "$repo_costs_file"
+
+        if [[ "$started_at" == "$today"* ]]; then
+            today_cost=$(echo "$today_cost + $cost" | bc 2>/dev/null || echo "$today_cost")
+        fi
+        if [[ "$started_at" > "$week_ago" ]]; then
+            week_cost=$(echo "$week_cost + $cost" | bc 2>/dev/null || echo "$week_cost")
+        fi
+        if [[ "$started_at" > "$month_ago" ]]; then
+            month_cost=$(echo "$month_cost + $cost" | bc 2>/dev/null || echo "$month_cost")
+        fi
+    done
+
+    # ─── CSV Output ───────────────────────────────────────────────────────
+    if [[ "$csv_mode" == "true" ]]; then
+        echo "task_name,cost_usd,started_at,repo"
+        if [[ -s "$all_tasks_file" ]]; then
+            sort -rn "$all_tasks_file" | while read -r cost name started repo; do
+                echo "$name,$cost,$started,$repo"
+            done
+        fi
+        return 0
+    fi
+
+    # ─── Report Mode (detailed) ──────────────────────────────────────────
+    if [[ "$report_mode" == "true" ]]; then
+        echo "# Claude Pipeline Cost Report"
+        echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo ""
+        echo "## Summary"
+        echo "| Period   | Cost      |"
+        echo "|----------|-----------|"
+        echo "| Today    | \$$today_cost |"
+        echo "| Week     | \$$week_cost |"
+        echo "| Month    | \$$month_cost |"
+        echo "| All Time | \$$total_cost |"
+        echo ""
+        echo "Total tasks with cost data: $task_count"
+        echo ""
+
+        echo "## Per-Repository Breakdown"
+        echo "| Repository | Cost | Tasks |"
+        echo "|------------|------|-------|"
+        if [[ -s "$repo_costs_file" ]]; then
+            awk '{costs[$2]+=$1; counts[$2]++} END {for(r in costs) printf "%s %.2f %d\n", r, costs[r], counts[r]}' \
+                "$repo_costs_file" | sort -k2 -rn | while read -r repo cost count; do
+                echo "| $repo | \$$cost | $count |"
+            done
+        fi
+        echo ""
+
+        echo "## Top 20 Tasks by Cost"
+        echo "| Task | Cost | Date | Repo |"
+        echo "|------|------|------|------|"
+        if [[ -s "$all_tasks_file" ]]; then
+            sort -rn "$all_tasks_file" | head -20 | while read -r cost name started repo; do
+                local date_only="${started%%T*}"
+                echo "| $name | \$$cost | $date_only | $repo |"
+            done
+        fi
+        echo ""
+
+        # Daily breakdown for the past week
+        echo "## Daily Costs (Past 7 Days)"
+        echo "| Date | Cost |"
+        echo "|------|------|"
+        for i in $(seq 0 6); do
+            local day
+            day=$(date -v-${i}d +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
+            local day_cost=0
+            if [[ -s "$all_tasks_file" ]]; then
+                day_cost=$(grep "$day" "$all_tasks_file" 2>/dev/null | awk '{s+=$1}END{printf "%.2f", s+0}')
+            fi
+            echo "| $day | \$$day_cost |"
+        done
+        return 0
+    fi
+
+    # ─── Standard Display ─────────────────────────────────────────────────
+    echo -e "${BOLD}╔══════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║        Pipeline Cost Report           ║${NC}"
+    echo -e "${BOLD}╚══════════════════════════════════════╝${NC}"
+    echo ""
+
+    if [[ -n "$repo_filter" ]]; then
+        echo -e "  ${DIM}(filtered to repo: $repo_filter)${NC}"
+        echo ""
+    fi
+
+    echo -e "  ${BOLD}Today:${NC}      \$$today_cost"
+    echo -e "  ${BOLD}This Week:${NC}  \$$week_cost"
+    echo -e "  ${BOLD}This Month:${NC} \$$month_cost"
+    echo -e "  ${BOLD}All Time:${NC}   \$$total_cost"
+    echo -e "  ${BOLD}Tasks:${NC}      $task_count tracked"
+    echo ""
+
+    # Budget alert
+    local daily_budget
+    daily_budget=$(grep -E "^\s*daily_budget:" "$PIPELINE_DIR/config.yml" 2>/dev/null | sed 's/.*daily_budget:\s*//' | xargs)
+    if [[ -n "$daily_budget" && "$daily_budget" != "0" ]]; then
+        local pct
+        pct=$(echo "scale=0; $today_cost * 100 / $daily_budget" | bc 2>/dev/null || echo "0")
+        if [[ $pct -ge 90 ]]; then
+            echo -e "  ${RED}⚠ BUDGET ALERT: Today's spend is ${pct}% of daily budget (\$${daily_budget})${NC}"
+        elif [[ $pct -ge 70 ]]; then
+            echo -e "  ${YELLOW}⚠ Budget warning: Today's spend is ${pct}% of daily budget (\$${daily_budget})${NC}"
+        else
+            echo -e "  ${DIM}Budget: ${pct}% of daily \$${daily_budget}${NC}"
+        fi
+        echo ""
+    fi
+
+    # Per-repo breakdown
+    if [[ -s "$repo_costs_file" ]]; then
+        echo -e "  ${BOLD}Cost by Repository:${NC}"
+        awk '{costs[$2]+=$1; counts[$2]++} END {for(r in costs) printf "%.4f %s %d\n", costs[r], r, counts[r]}' \
+            "$repo_costs_file" | sort -rn | while read -r cost repo count; do
+            printf "    ${CYAN}\$%-8s${NC} %-20s ${DIM}(%d tasks)${NC}\n" "$cost" "$repo" "$count"
+        done
+        echo ""
+    fi
+
+    # Per-task breakdown (top 10 most expensive)
+    echo -e "  ${BOLD}Top Tasks by Cost:${NC}"
+    local has_costs=false
+    if [[ -s "$all_tasks_file" ]]; then
+        has_costs=true
+        sort -rn "$all_tasks_file" | head -10 | while read -r cost name started repo; do
+            printf "    ${GREEN}\$%-8s${NC} %-25s ${DIM}%s${NC}\n" "$cost" "$name" "$repo"
+        done
+    fi
+
+    if [[ "$has_costs" == "false" ]]; then
+        echo -e "    ${DIM}(no cost data yet — costs are tracked after task completion)${NC}"
+    fi
+    echo ""
+}
+
+cmd_deps() {
+    echo -e "${BOLD}Task Dependency Graph${NC}"
+    echo ""
+
+    local has_deps=false
+
+    # Scan all directories for tasks with depends_on
+    for dir in "$QUEUE_DIR" "$PENDING_DIR" "$ACTIVE_DIR" "$DONE_DIR" "$FAILED_DIR"; do
+        for f in "$dir"/*.md; do
+            [[ -f "$f" ]] || continue
+            local deps
+            deps=$(sed -n '/^---$/,/^---$/p' "$f" 2>/dev/null | grep "^depends_on:" | sed 's/depends_on:\s*//' | xargs || true)
+            [[ -z "$deps" ]] && continue
+
+            has_deps=true
+            local name title dir_label status_color
+            name=$(basename "$f" .md)
+            title=$(task_title "$f")
+            dir_label=$(basename "$dir")
+
+            case "$dir_label" in
+                done)    status_color="${GREEN}✓${NC}" ;;
+                active)  status_color="${YELLOW}▶${NC}" ;;
+                queue)   status_color="${CYAN}○${NC}" ;;
+                failed)  status_color="${RED}✗${NC}" ;;
+                *)       status_color="${BLUE}◻${NC}" ;;
+            esac
+
+            echo -e "  $status_color $name: $title"
+
+            # Show each dependency and its status
+            IFS=',' read -ra dep_list <<< "$deps"
+            for dep in "${dep_list[@]}"; do
+                dep=$(echo "$dep" | xargs)
+                [[ -z "$dep" ]] && continue
+                local dep_status="?"
+                if find "$DONE_DIR" -name "*${dep}*" -type f 2>/dev/null | grep -q .; then
+                    dep_status="${GREEN}✓ done${NC}"
+                elif find "$ACTIVE_DIR" -name "*${dep}*" -type f 2>/dev/null | grep -q .; then
+                    dep_status="${YELLOW}▶ running${NC}"
+                elif find "$QUEUE_DIR" -name "*${dep}*" -type f 2>/dev/null | grep -q .; then
+                    dep_status="${CYAN}○ queued${NC}"
+                elif find "$PENDING_DIR" -name "*${dep}*" -type f 2>/dev/null | grep -q .; then
+                    dep_status="${BLUE}◻ pending${NC}"
+                elif find "$FAILED_DIR" -name "*${dep}*" -type f 2>/dev/null | grep -q .; then
+                    dep_status="${RED}✗ failed${NC}"
+                else
+                    dep_status="${DIM}? not found${NC}"
+                fi
+                echo -e "    └── $dep  [$dep_status]"
+            done
+            echo ""
+        done
+    done
+
+    if [[ "$has_deps" == "false" ]]; then
+        echo -e "  ${DIM}No tasks with dependencies found.${NC}"
+        echo -e "  ${DIM}Use: pipeline add \"task\" --depends-on \"other-task-name\"${NC}"
+    fi
+}
+
+cmd_schedule() {
+    local action="${1:-list}"
+
+    case "$action" in
+        list|ls)
+            echo -e "${BOLD}Scheduled Tasks${NC}"
+            echo ""
+
+            local has_scheduled=false
+            local schedule_state="$STATE_DIR/.schedules"
+
+            for dir in "$PENDING_DIR" "$DONE_DIR" "$QUEUE_DIR"; do
+                for f in "$dir"/*.md; do
+                    [[ -f "$f" ]] || continue
+                    local sched
+                    sched=$(sed -n '/^---$/,/^---$/p' "$f" 2>/dev/null | grep "^schedule:" | sed 's/schedule:\s*//' | sed 's/^"//' | sed 's/"$//' | xargs || true)
+                    [[ -z "$sched" ]] && continue
+
+                    has_scheduled=true
+                    local name title last_run
+                    name=$(basename "$f" .md)
+                    title=$(task_title "$f")
+
+                    # Check last run
+                    last_run="never"
+                    if [[ -f "$schedule_state/${name}.last_run" ]]; then
+                        local lr
+                        lr=$(cat "$schedule_state/${name}.last_run" 2>/dev/null)
+                        if [[ -n "$lr" ]]; then
+                            # Format: YYYYMMDDHHmm -> YYYY-MM-DD HH:mm
+                            last_run="${lr:0:4}-${lr:4:2}-${lr:6:2} ${lr:8:2}:${lr:10:2}"
+                        fi
+                    fi
+
+                    echo -e "  ${PURPLE}⏱${NC}  ${BOLD}$name${NC}"
+                    echo -e "      Title:    $title"
+                    echo -e "      Schedule: ${CYAN}$sched${NC}"
+                    echo -e "      Last run: ${DIM}$last_run${NC}"
+                    echo -e "      Location: $(basename "$dir")/"
+                    echo ""
+                done
+            done
+
+            if [[ "$has_scheduled" == "false" ]]; then
+                echo -e "  ${DIM}No scheduled tasks found.${NC}"
+                echo ""
+                echo -e "  ${DIM}Create one with:${NC}"
+                echo -e "  ${DIM}  pipeline add \"Run daily tests\" --schedule \"0 9 * * 1-5\" --repo myproject${NC}"
+                echo ""
+                echo -e "  ${DIM}Or add 'schedule: \"0 9 * * *\"' to any task's frontmatter.${NC}"
+            fi
+            ;;
+
+        remove|rm)
+            local name="${2:-}"
+            if [[ -z "$name" ]]; then
+                echo -e "${RED}Usage:${NC} pipeline schedule remove <task-name>"
+                exit 1
+            fi
+
+            # Find and remove the schedule field
+            local task_file
+            if task_file=$(find_task "$name"); then
+                sed -i '' '/^schedule:/d' "$task_file"
+                echo -e "${GREEN}✓${NC} Schedule removed from: $(basename "$task_file")"
+
+                # Clean up state
+                rm -f "$STATE_DIR/.schedules/${name}.last_run"
+            else
+                echo -e "${RED}Task not found:${NC} $name"
+                exit 1
+            fi
+            ;;
+
+        *)
+            echo -e "${RED}Usage:${NC} pipeline schedule [list|remove <name>]"
+            exit 1
+            ;;
+    esac
+}
+
+# ─── Live Task Viewer ────────────────────────────────────────────────────────
+LIVE_STREAM="$PIPELINE_DIR/bin/live-stream.py"
+
+cmd_live() {
+    local query="${1:-}"
+    local follow_flag=""
+
+    # Check for -f/--follow flag
+    for arg in "$@"; do
+        case "$arg" in
+            -f|--follow) follow_flag="--follow" ;;
+        esac
+    done
+    # Remove flags from query
+    query=$(echo "$query" | sed 's/--follow//' | sed 's/-f//' | xargs)
+
+    if [[ -z "$query" ]]; then
+        # No argument — show all active tasks and let user pick
+        local active_files
+        active_files=$(find "$ACTIVE_DIR" -name "*.md" -type f 2>/dev/null | sort)
+
+        if [[ -z "$active_files" ]]; then
+            echo -e "${YELLOW}No active tasks.${NC} Nothing to watch."
+            echo -e "${DIM}Use 'pipeline list active' to see active tasks.${NC}"
+            return 0
+        fi
+
+        local count
+        count=$(echo "$active_files" | wc -l | xargs)
+
+        if [[ "$count" -eq 1 ]]; then
+            # Single active task — watch it directly
+            query=$(basename "$active_files" .md)
+        else
+            echo -e "${BOLD}Active tasks:${NC}"
+            echo ""
+            local i=1
+            while IFS= read -r f; do
+                local name title
+                name=$(basename "$f" .md)
+                title=$(task_title "$f")
+                echo -e "  ${GREEN}${i})${NC} ${name} — ${title}"
+                i=$((i + 1))
+            done <<< "$active_files"
+            echo ""
+            echo -e "${DIM}Usage: pipeline live <number-or-name>${NC}"
+            return 0
+        fi
+    fi
+
+    # Resolve task name from number prefix or partial match
+    local task_name=""
+    local stream_file=""
+
+    # Try matching by number prefix (e.g., "012" or "12")
+    local padded
+    padded=$(printf "%03d" "$((10#$query))" 2>/dev/null || echo "")
+
+    if [[ -n "$padded" ]]; then
+        # Look in state dir for matching prefix
+        local match
+        match=$(find "$STATE_DIR" -maxdepth 1 -type d -name "${padded}*" 2>/dev/null | head -1)
+        if [[ -n "$match" ]]; then
+            task_name=$(basename "$match")
+            stream_file="$match/stream-output.jsonl"
+        fi
+    fi
+
+    # If no match by number, try direct name match
+    if [[ -z "$task_name" ]]; then
+        local match
+        match=$(find "$STATE_DIR" -maxdepth 1 -type d -name "*${query}*" 2>/dev/null | head -1)
+        if [[ -n "$match" ]]; then
+            task_name=$(basename "$match")
+            stream_file="$match/stream-output.jsonl"
+        fi
+    fi
+
+    if [[ -z "$task_name" || ! -f "$stream_file" ]]; then
+        echo -e "${RED}✗${NC} No stream data found for '${query}'"
+        echo -e "${DIM}  Make sure the task has been dispatched (check 'pipeline list active')${NC}"
+        return 1
+    fi
+
+    # Check if task is still running (in active dir)
+    local is_active="false"
+    if find "$ACTIVE_DIR" -name "${task_name}.md" -type f 2>/dev/null | grep -q .; then
+        is_active="true"
+        # Default to follow mode for active tasks
+        if [[ -z "$follow_flag" ]]; then
+            follow_flag="--follow"
+        fi
+    else
+        # Task is not active — check if it completed
+        local in_done="false"
+        if find "$DONE_DIR" -name "${task_name}.md" -type f 2>/dev/null | grep -q . || \
+           find "$FAILED_DIR" -name "${task_name}.md" -type f 2>/dev/null | grep -q .; then
+            in_done="true"
+        fi
+        # Don't follow completed tasks unless explicitly asked
+        if [[ "$in_done" == "true" && -z "$follow_flag" ]]; then
+            follow_flag=""
+        fi
+    fi
+
+    # Run the stream viewer
+    python3 "$LIVE_STREAM" "$stream_file" $follow_flag --task-name "$task_name"
+}
+
+cmd_help() {
+    echo -e "${BOLD}Claude Pipeline${NC} — Autonomous task execution"
+    echo ""
+    echo -e "${BOLD}USAGE${NC}"
+    echo "  pipeline <command> [args...]"
+    echo ""
+    echo -e "${BOLD}COMMANDS${NC}"
+    echo -e "  ${GREEN}add${NC} <description> [--preview] [--dumb] [--repo X] [--type X] [--depends-on X] [--schedule X]"
+    echo "      Create a task from plain English (AI-powered inference)"
+    echo "      --preview     Show generated task for approval before queuing"
+    echo "      --dumb        Skip AI, use simple template (fallback mode)"
+    echo "      --depends-on  Task name(s) that must complete first (comma-separated)"
+    echo "      --schedule    Cron expression for recurring execution"
+    echo ""
+    echo -e "  ${GREEN}new${NC} [template]"
+    echo "      Create a task from template in \$EDITOR (code|research|general)"
+    echo ""
+    echo -e "  ${GREEN}run${NC} <name>"
+    echo "      Execute a pending task (moves to queue)"
+    echo ""
+    echo -e "  ${GREEN}dispatch${NC}"
+    echo "      Manually trigger the dispatcher to process the queue"
+    echo ""
+    echo -e "  ${CYAN}status${NC}"
+    echo "      Show pipeline status dashboard"
+    echo ""
+    echo -e "  ${CYAN}list${NC} [queue|active|pending|done|failed|all]"
+    echo "      List tasks in a directory"
+    echo ""
+    echo -e "  ${CYAN}view${NC} <name>"
+    echo "      View a task and its output"
+    echo ""
+    echo -e "  ${CYAN}logs${NC} [name]"
+    echo "      View task log (or global log if no name)"
+    echo ""
+    echo -e "  ${CYAN}live${NC} [task] [-f]"
+    echo "      Watch what Claude is doing in real-time (tool calls, output, cost)"
+    echo ""
+    echo -e "  ${GREEN}resume${NC} <name>"
+    echo "      Resume an interrupted task (picks up where it left off)"
+    echo ""
+    echo -e "  ${YELLOW}retry${NC} <name>"
+    echo "      Re-queue a failed task (fresh start, discards session)"
+    echo ""
+    echo -e "  ${CYAN}state${NC} <name>"
+    echo "      View checkpoint state (session, attempts, git snapshot)"
+    echo ""
+    echo -e "  ${YELLOW}watch${NC}"
+    echo "      Start/restart the filesystem watcher"
+    echo ""
+    echo -e "  ${YELLOW}stop${NC}"
+    echo "      Stop the filesystem watcher"
+    echo ""
+    echo -e "  ${CYAN}dashboard${NC} [port]"
+    echo "      Open the web dashboard (default port: 7778)"
+    echo ""
+    echo -e "  ${CYAN}costs${NC} [--csv] [--report] [--repo X]"
+    echo "      Show cost report (today / week / month / all-time / per-repo)"
+    echo "      --csv     Export as CSV"
+    echo "      --report  Generate detailed markdown report"
+    echo "      --repo X  Filter to a specific repository"
+    echo ""
+    echo -e "  ${CYAN}notify-test${NC} [telegram|email|webhook|all]"
+    echo "      Test notification channels (sends a test message)"
+    echo ""
+    echo -e "  ${CYAN}deps${NC}"
+    echo "      Show task dependency graph"
+    echo ""
+    echo -e "  ${CYAN}schedule${NC} [list|remove <name>]"
+    echo "      List or manage scheduled/recurring tasks"
+    echo ""
+    echo -e "  ${DIM}clean${NC} [days]"
+    echo "      Remove completed/failed tasks older than N days (default: 30)"
+    echo ""
+    echo -e "${BOLD}EXAMPLES${NC}"
+    echo "  pipeline add \"Fix the login timeout bug\"                    # AI infers repo, type, priority"
+    echo "  pipeline add \"Research best practices for WebSocket scaling\" # AI infers type=research"
+    echo "  pipeline add \"Refactor the payment flow\" --preview          # Review AI output first"
+    echo "  pipeline add \"Quick fix\" --dumb --repo cafe-aapama         # Skip AI, simple template"
+    echo "  pipeline new code"
+    echo "  pipeline status"
+    echo "  pipeline view 001"
+    echo "  pipeline resume 003     # Continue interrupted task"
+    echo "  pipeline retry 003      # Start over from scratch"
+    echo "  pipeline state 003      # View checkpoint info"
+    echo ""
+    echo -e "${BOLD}TASK FILE FORMAT${NC}"
+    echo "  Drop a .md file in $QUEUE_DIR with YAML frontmatter:"
+    echo "  ---"
+    echo "  type: code|research|review|writing|general"
+    echo "  repo: project-name-or-path"
+    echo "  auto: true|false"
+    echo "  priority: 1-10"
+    echo "  model: opus|sonnet"
+    echo "  timeout: 600"
+    echo "  budget: 5.00"
+    echo "  depends_on: task-name-1, task-name-2"
+    echo "  schedule: \"0 9 * * 1-5\""
+    echo "  ---"
+    echo "  # Your task description here"
+}
+
+# ─── Main Router ──────────────────────────────────────────────────────────────
+command="${1:-help}"
+shift 2>/dev/null || true
+
+case "$command" in
+    add)      cmd_add "$@" ;;
+    new)      cmd_new "$@" ;;
+    run)      cmd_run "$@" ;;
+    dispatch) cmd_dispatch ;;
+    dashboard) cmd_dashboard "$@" ;;
+    costs)    cmd_costs "$@" ;;
+    notify-test|notify) cmd_notify_test "$@" ;;
+    deps|dependencies) cmd_deps ;;
+    schedule|schedules) cmd_schedule "$@" ;;
+    status)   cmd_status ;;
+    list|ls)  cmd_list "$@" ;;
+    view)     cmd_view "$@" ;;
+    resume)   cmd_resume "$@" ;;
+    retry)    cmd_retry "$@" ;;
+    state)    cmd_state "$@" ;;
+    logs|log) cmd_logs "$@" ;;
+    live)     cmd_live "$@" ;;
+    watch)    cmd_watch ;;
+    stop)     cmd_stop ;;
+    up)       cmd_up ;;
+    down)     cmd_down ;;
+    install)  cmd_install ;;
+    telegram) cmd_telegram "$@" ;;
+    clean)    cmd_clean "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *)
+        echo -e "${RED}Unknown command:${NC} $command"
+        echo "Run 'pipeline help' for usage."
+        exit 1
+        ;;
+esac

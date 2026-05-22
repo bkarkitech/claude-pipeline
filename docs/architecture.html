@@ -1,0 +1,2192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Pipeline — Autonomous AI Task Execution</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-dim: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --purple: #bc8cff;
+            --cyan: #39d353;
+            --orange: #f0883e;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            background: rgba(13, 17, 23, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+            padding: 0.75rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+        }
+
+        nav .logo {
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: var(--accent);
+            white-space: nowrap;
+        }
+
+        nav .nav-links {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        nav a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: color 0.2s;
+        }
+
+        nav a:hover { color: var(--accent); }
+
+        /* Hero */
+        .hero {
+            padding: 8rem 2rem 4rem;
+            text-align: center;
+            background: radial-gradient(ellipse at top, rgba(88, 166, 255, 0.08) 0%, transparent 60%);
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-dim);
+            max-width: 700px;
+            margin: 0 auto 2rem;
+        }
+
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--green);
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        /* Sections */
+        section {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+
+        section h2 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            color: var(--text);
+        }
+
+        section h3 {
+            font-size: 1.3rem;
+            margin-bottom: 0.75rem;
+            color: var(--accent);
+        }
+
+        .section-subtitle {
+            color: var(--text-dim);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        /* Mermaid diagram container */
+        .diagram-container {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2rem 0;
+            overflow-x: auto;
+        }
+
+        .diagram-container .mermaid {
+            display: flex;
+            justify-content: center;
+        }
+
+        /* File tree */
+        .file-tree {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            line-height: 1.8;
+            overflow-x: auto;
+        }
+
+        .file-tree .dir { color: var(--accent); font-weight: 600; }
+        .file-tree .file { color: var(--text); }
+        .file-tree .comment { color: var(--text-dim); font-style: italic; }
+        .file-tree .new { color: var(--green); font-weight: 600; }
+
+        /* Component cards */
+        .components-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .component-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: border-color 0.3s, transform 0.2s;
+            cursor: pointer;
+        }
+
+        .component-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .component-card.active {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px rgba(88, 166, 255, 0.1);
+        }
+
+        .component-card h4 {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+
+        .component-card .icon {
+            font-size: 1.2rem;
+        }
+
+        .component-card p {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        .component-card .tag {
+            display: inline-block;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.1rem 0.5rem;
+            font-size: 0.75rem;
+            color: var(--accent);
+            margin-top: 0.5rem;
+        }
+
+        .component-card .tag.new-tag {
+            color: var(--green);
+            border-color: var(--green);
+        }
+
+        /* Code blocks */
+        .code-block {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+            position: relative;
+        }
+
+        .code-block .lang-tag {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.75rem;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .code-block pre {
+            white-space: pre;
+            color: var(--text);
+        }
+
+        .code-block .keyword { color: var(--purple); }
+        .code-block .string { color: var(--green); }
+        .code-block .comment { color: var(--text-dim); }
+        .code-block .flag { color: var(--orange); }
+
+        /* Flow steps */
+        .flow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+
+        .flow-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 1rem 1.5rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+
+        .flow-step:hover {
+            border-color: var(--accent);
+        }
+
+        .flow-step .step-num {
+            min-width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: var(--accent);
+            color: var(--bg);
+            font-weight: 700;
+            font-size: 0.85rem;
+        }
+
+        .flow-step .step-content h4 {
+            color: var(--text);
+            margin-bottom: 0.25rem;
+        }
+
+        .flow-step .step-content p {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        /* Feature highlight boxes */
+        .feature-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border-left: 4px solid var(--accent);
+        }
+
+        .feature-box.green { border-left-color: var(--green); }
+        .feature-box.yellow { border-left-color: var(--yellow); }
+        .feature-box.purple { border-left-color: var(--purple); }
+
+        .feature-box h4 {
+            color: var(--text);
+            margin-bottom: 0.5rem;
+        }
+
+        .feature-box p, .feature-box li {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        .feature-box ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .feature-box ul li::before {
+            content: "  ";
+            color: var(--green);
+            margin-right: 0.5rem;
+        }
+
+        /* Use cases */
+        .use-cases {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.25rem;
+            margin-top: 2rem;
+        }
+
+        .use-case {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: border-color 0.3s;
+        }
+
+        .use-case:hover { border-color: var(--green); }
+
+        .use-case .uc-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .use-case h4 {
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+
+        .use-case p {
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            background: var(--surface);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+
+        th {
+            background: var(--surface-2);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        td { color: var(--text-dim); }
+        td code {
+            background: var(--surface-2);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: var(--text);
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+
+        .tab-btn {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            padding: 0.75rem 1.25rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover { color: var(--text); }
+        .tab-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Interactive demo */
+        .demo-terminal {
+            background: #000;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1rem;
+            font-family: 'SF Mono', monospace;
+            font-size: 0.85rem;
+            margin: 1.5rem 0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .demo-terminal .prompt {
+            color: var(--green);
+        }
+
+        .demo-terminal .command {
+            color: var(--text);
+        }
+
+        .demo-terminal .output {
+            color: var(--text-dim);
+            white-space: pre-wrap;
+        }
+
+        .demo-terminal .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 16px;
+            background: var(--green);
+            animation: blink 1s infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .demo-buttons {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+        }
+
+        .demo-btn {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-family: 'SF Mono', monospace;
+            transition: all 0.2s;
+        }
+
+        .demo-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Roadmap */
+        .roadmap {
+            position: relative;
+            padding-left: 2rem;
+            margin: 2rem 0;
+        }
+
+        .roadmap::before {
+            content: '';
+            position: absolute;
+            left: 0.5rem;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--border);
+        }
+
+        .roadmap-item {
+            position: relative;
+            margin-bottom: 2rem;
+            padding-left: 1.5rem;
+        }
+
+        .roadmap-item::before {
+            content: '';
+            position: absolute;
+            left: -1.6rem;
+            top: 0.5rem;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 2px solid var(--bg);
+        }
+
+        .roadmap-item.done::before { background: var(--green); }
+        .roadmap-item.next::before { background: var(--yellow); }
+        .roadmap-item.future::before { background: var(--text-dim); }
+
+        .roadmap-item h4 { color: var(--text); margin-bottom: 0.25rem; }
+        .roadmap-item p { color: var(--text-dim); font-size: 0.9rem; }
+
+        /* Version badge */
+        .version-badge {
+            display: inline-block;
+            background: var(--surface-2);
+            border: 1px solid var(--green);
+            color: var(--green);
+            padding: 0.2rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+
+        /* Install steps */
+        .install-steps {
+            counter-reset: step;
+        }
+
+        .install-step {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            padding-left: 3.5rem;
+        }
+
+        .install-step::before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            left: 1.25rem;
+            top: 1.25rem;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: var(--accent);
+            color: var(--bg);
+            font-weight: 700;
+            font-size: 0.75rem;
+        }
+
+        .install-step h4 {
+            color: var(--text);
+            margin-bottom: 0.25rem;
+            font-size: 0.95rem;
+        }
+
+        .install-step p {
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        .install-step code {
+            background: var(--surface-2);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: var(--green);
+        }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 3rem 2rem;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            nav { padding: 0.5rem 1rem; gap: 1rem; }
+            nav .nav-links { gap: 0.75rem; }
+            .hero { padding: 6rem 1rem 3rem; }
+            section { padding: 2rem 1rem; }
+            .components-grid { grid-template-columns: 1fr; }
+        }
+
+        /* Animations */
+        .fade-in {
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.6s, transform 0.6s;
+        }
+
+        .fade-in.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Changelog */
+        .changelog-entry {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.25rem 0;
+        }
+
+        .changelog-entry .ch-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .changelog-entry .ch-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .ch-badge.bugfix { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid var(--red); }
+        .ch-badge.feature { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid var(--green); }
+        .ch-badge.improvement { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid var(--accent); }
+
+        .changelog-entry h4 {
+            color: var(--text);
+            margin: 0;
+        }
+
+        .changelog-entry .ch-file {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+        }
+
+        .changelog-entry .ch-file code {
+            background: var(--surface-2);
+            padding: 0.1rem 0.35rem;
+            border-radius: 4px;
+            font-size: 0.78rem;
+            color: var(--accent);
+        }
+
+        .changelog-entry p {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .ch-diff {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            margin-top: 0.75rem;
+        }
+
+        @media (max-width: 640px) {
+            .ch-diff { grid-template-columns: 1fr; }
+        }
+
+        .ch-diff-block {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.75rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.78rem;
+            overflow-x: auto;
+        }
+
+        .ch-diff-block .diff-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.4rem;
+        }
+
+        .ch-diff-block.before .diff-label { color: var(--red); }
+        .ch-diff-block.after .diff-label { color: var(--green); }
+
+        .ch-diff-block pre {
+            color: var(--text-dim);
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .ch-diff-block.before pre { color: #f97583; }
+        .ch-diff-block.after pre { color: #85e89d; }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="logo">Claude Pipeline</div>
+    <div class="nav-links">
+        <a href="#overview">Overview</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#features">Features</a>
+        <a href="#getting-started">Getting Started</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="#demo">Demo</a>
+        <a href="#cli">CLI Reference</a>
+        <a href="#source">Source Code</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#changelog">Changelog</a>
+    </div>
+</nav>
+
+<!-- Hero -->
+<div class="hero">
+    <h1>Claude Pipeline</h1>
+    <p>An autonomous, file-based task execution system powered by Claude AI. Write a task in plain English. Walk away. Come back to results.</p>
+    <div class="hero-stats">
+        <div class="stat">
+            <div class="stat-value">~6000</div>
+            <div class="stat-label">Lines of Code</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">0</div>
+            <div class="stat-label">Dependencies to Install</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">10</div>
+            <div class="stat-label">Core Features</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">24/7</div>
+            <div class="stat-label">Always Running</div>
+        </div>
+    </div>
+</div>
+
+<!-- Overview -->
+<section id="overview" class="fade-in">
+    <h2>What Is This?</h2>
+    <p class="section-subtitle">A pipeline that turns plain English into executed results &mdash; autonomously, with session persistence and crash recovery.</p>
+
+    <p style="color: var(--text-dim); margin-bottom: 1.5rem;">
+        The Claude Pipeline is a local-first, file-based system that lets you describe tasks in plain English and have Claude Code (Anthropic's AI coding agent) execute them without human intervention. It lives entirely on your machine at <code>~/.claude-pipeline/</code>, uses macOS native tools (Watchman, launchd) for persistence, and communicates through the filesystem &mdash; no servers, no databases, no cloud infrastructure beyond the AI API itself.
+    </p>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-top: 2rem;">
+        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+            <h4 style="color: var(--green); margin-bottom: 0.5rem;">You Type</h4>
+            <p style="color: var(--text-dim); font-size: 0.9rem;"><code>pipeline add "fix the auth timeout bug in skykeep"</code> &mdash; plain English, nothing else.</p>
+        </div>
+        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+            <h4 style="color: var(--yellow); margin-bottom: 0.5rem;">AI Generates</h4>
+            <p style="color: var(--text-dim); font-size: 0.9rem;">Structured task file with inferred type, repo, priority, branch name, acceptance criteria &mdash; all automatic.</p>
+        </div>
+        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+            <h4 style="color: var(--accent); margin-bottom: 0.5rem;">Pipeline Executes</h4>
+            <p style="color: var(--text-dim); font-size: 0.9rem;">Claude reads the codebase, implements the fix, commits to a branch, handles failures, can resume if interrupted.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Key Features -->
+<section id="features" class="fade-in">
+    <h2>Key Features <span class="version-badge">v5.0</span></h2>
+    <p class="section-subtitle">Ten layers of intelligence working together.</p>
+
+    <div class="feature-box green">
+        <h4>1. Intelligent Task Generator (AI-Powered)</h4>
+        <p style="margin-bottom: 0.75rem;">Write tasks in plain English. An AI pre-processor (Claude Haiku, ~$0.005/call) turns your words into structured task files with inferred metadata.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="prompt">$</span> pipeline add "fix the auth timeout bug, users logged out after 5 mins should be 30"
+
+<span class="comment"># AI generates:</span>
+<span class="keyword">type:</span> <span class="string">code</span>         <span class="comment"># inferred from "fix"</span>
+<span class="keyword">repo:</span> <span class="string">skykeep</span>  <span class="comment"># inferred from context</span>
+<span class="keyword">priority:</span> <span class="string">8</span>        <span class="comment"># bug affecting users = high</span>
+<span class="keyword">branch:</span> <span class="string">fix/auth-timeout-session</span>
+<span class="keyword">budget:</span> <span class="string">5.00</span>       <span class="comment"># code task budget</span>
+<span class="comment"># Plus full description, context, acceptance criteria...</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Infers type (code/research/review/writing) from natural language</li>
+            <li>Maps project names to repositories automatically</li>
+            <li>Generates branch names with correct prefixes (fix/, feat/, refactor/)</li>
+            <li>Sets appropriate budgets (research=$2, code=$5, complex=$8)</li>
+            <li>Falls back gracefully to simple mode if AI is unavailable</li>
+            <li><code>--preview</code> flag lets you review before queuing</li>
+        </ul>
+    </div>
+
+    <div class="feature-box purple">
+        <h4>2. Session Checkpointing & Resumption</h4>
+        <p style="margin-bottom: 0.75rem;">If a task is interrupted (timeout, crash, power loss, API error), it can pick up exactly where it left off &mdash; no work lost.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="comment"># Task times out mid-execution</span>
+<span class="output">[ERROR] Task 004 timed out after 25s (resumable, session=e2c583d0...)</span>
+
+<span class="comment"># Resume exactly where it stopped</span>
+<span class="prompt">$</span> pipeline resume 004
+<span class="output">&#10003; Resuming with session e2c583d0... (will be attempt 3)
+&#10003; Task re-queued for resumption</span>
+
+<span class="comment"># View checkpoint state</span>
+<span class="prompt">$</span> pipeline state 004
+<span class="output">  Session:   e2c583d0-cff9-40ac-bcd6-9854f3dfdea8
+  Attempt:   2
+  Budget:    $0.09 used
+  Resumable: true</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Native Claude <code>--resume &lt;session-id&gt;</code> for seamless continuation</li>
+            <li>Git state captured before/after each attempt (branch, commits, diff)</li>
+            <li>Context reconstruction fallback if session is expired/corrupted</li>
+            <li>Budget accumulation across attempts (never over-spend)</li>
+            <li>Max 5 attempts before marking non-resumable</li>
+            <li>Orphan detection on startup (catches killed processes)</li>
+        </ul>
+    </div>
+
+    <div class="feature-box yellow">
+        <h4>3. Autonomous Execution Engine</h4>
+        <p style="margin-bottom: 0.75rem;">Tasks execute fully autonomously with concurrency control, atomic locking, timeout enforcement, and desktop notifications.</p>
+        <ul style="margin-top: 0.75rem;">
+            <li>Filesystem watcher (Watchman) for instant task detection</li>
+            <li>Atomic locks (<code>set -o noclobber</code>) prevent double-processing</li>
+            <li>Configurable concurrency limit (default: 2 parallel tasks)</li>
+            <li>Background watchdog enforces timeout per task</li>
+            <li>macOS desktop notifications on completion/failure</li>
+            <li>launchd service keeps the system alive across reboots</li>
+        </ul>
+    </div>
+
+    <div class="feature-box">
+        <h4>4. Task Dependencies</h4>
+        <p style="margin-bottom: 0.75rem;">Define execution order with <code>depends_on</code>. Tasks wait in pending until all dependencies complete, then auto-queue.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="comment"># Task B waits for Task A</span>
+<span class="prompt">$</span> pipeline add "deploy to staging" <span class="flag">--depends-on</span> <span class="string">"run-integration-tests"</span>
+<span class="output">&#10003; Task created: 013-deploy-to-staging.md
+  -> Blocked on: run-integration-tests</span>
+
+<span class="comment"># View dependency graph</span>
+<span class="prompt">$</span> pipeline deps
+<span class="output">  ◻ 013-deploy-to-staging: Deploy to staging
+    └── run-integration-tests  [✓ done]</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li><code>depends_on: task-a, task-b</code> frontmatter (comma-separated)</li>
+            <li>Dispatcher checks all deps are in <code>done/</code> before processing</li>
+            <li>Blocked tasks auto-queue when dependencies complete</li>
+            <li><code>pipeline deps</code> shows full dependency graph with status</li>
+            <li><code>--depends-on</code> flag works with both smart and dumb add modes</li>
+        </ul>
+    </div>
+
+    <div class="feature-box green">
+        <h4>5. Scheduled & Recurring Tasks</h4>
+        <p style="margin-bottom: 0.75rem;">Run tasks on a cron schedule. The watcher evaluates cron expressions every 60 seconds and queues matching tasks automatically.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="comment"># Run tests every weekday at 9am</span>
+<span class="prompt">$</span> pipeline add "run integration tests" <span class="flag">--schedule</span> <span class="string">"0 9 * * 1-5"</span> <span class="flag">--repo</span> myapp
+
+<span class="comment"># List all scheduled tasks</span>
+<span class="prompt">$</span> pipeline schedule
+<span class="output">  ⏱  012-run-integration-tests
+      Schedule: 0 9 * * 1-5
+      Last run: 2026-05-22 09:00</span>
+
+<span class="comment"># Remove a schedule</span>
+<span class="prompt">$</span> pipeline schedule remove 012</pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Standard 5-field cron: <code>min hour dom month dow</code></li>
+            <li>Supports <code>*</code>, <code>*/N</code>, ranges (<code>1-5</code>), comma lists</li>
+            <li>Creates run copies &mdash; original task preserved for next trigger</li>
+            <li>De-duplication: won't re-trigger within the same minute</li>
+            <li>Persistent state tracks last-run times across restarts</li>
+        </ul>
+    </div>
+
+    <div class="feature-box purple">
+        <h4>6. Multi-Channel Notifications (Telegram, Email, Webhook)</h4>
+        <p style="margin-bottom: 0.75rem;">Get notified via macOS, Telegram, email, or any webhook endpoint. Each event type (start, complete, failure, timeout) is tagged.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">config.yml</span>
+            <pre><span class="keyword">notifications:</span>
+  <span class="keyword">telegram:</span>
+    <span class="keyword">enabled:</span> <span class="string">true</span>
+    <span class="keyword">bot_token:</span> <span class="string">"123456:ABC..."</span>
+    <span class="keyword">chat_id:</span> <span class="string">"-100123456"</span>
+  <span class="keyword">webhook:</span>
+    <span class="keyword">enabled:</span> <span class="string">true</span>
+    <span class="keyword">url:</span> <span class="string">"https://hooks.slack.com/..."</span>
+    <span class="keyword">events:</span> <span class="string">"complete,failure,timeout"</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li><strong>Telegram:</strong> Bot messages with emoji-coded events</li>
+            <li><strong>Email:</strong> System sendmail with event headers</li>
+            <li><strong>Webhook:</strong> JSON POST to any URL (Slack, Discord, n8n, etc.)</li>
+            <li>Event filtering: choose which events trigger which channels</li>
+            <li><code>pipeline notify-test</code> verifies all channels with real delivery</li>
+        </ul>
+    </div>
+
+    <div class="feature-box yellow">
+        <h4>7. Cost Reporting & Budget Alerts</h4>
+        <p style="margin-bottom: 0.75rem;">Track API spend across all tasks with daily/weekly/monthly breakdowns, per-repo aggregation, and budget alerts.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="prompt">$</span> pipeline costs
+<span class="output">  Today:      $3.42
+  This Week:  $18.76
+  This Month: $45.20
+  Budget: 70% of daily $25.00
+
+  Cost by Repository:
+    $12.30   skykeep        (4 tasks)
+    $6.46    cafe-aapama    (3 tasks)
+
+  Top Tasks by Cost:
+    $4.21    009-refactor-auth    skykeep</span>
+
+<span class="comment"># Export as CSV or markdown report</span>
+<span class="prompt">$</span> pipeline costs <span class="flag">--csv</span> > costs.csv
+<span class="prompt">$</span> pipeline costs <span class="flag">--report</span> > report.md
+<span class="prompt">$</span> pipeline costs <span class="flag">--repo</span> skykeep</pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Daily budget cap with 70%/90% alerts</li>
+            <li>Per-repo cost aggregation</li>
+            <li>CSV export for spreadsheets</li>
+            <li>Markdown report generation (daily breakdown, top tasks)</li>
+            <li>Costs tracked automatically from Claude's stream-json output</li>
+        </ul>
+    </div>
+
+    <div class="feature-box green">
+        <h4>8. Telegram Bot (Two-Way Integration)</h4>
+        <p style="margin-bottom: 0.75rem;">Send tasks from your phone and receive results back &mdash; full bidirectional Telegram integration. Create tasks via bot commands, get notified when they complete.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">telegram</span>
+            <pre><span class="comment"># Send a task from your phone</span>
+<span class="prompt">/task</span> fix the broken login button on mobile
+<span class="output">&#10003; Task created: 015-fix-login-button.md (queued)</span>
+
+<span class="comment"># Code tasks with --repo context</span>
+<span class="prompt">/code</span> add dark mode toggle to settings page
+<span class="output">&#10003; Code task: 016-add-dark-mode.md → skykeep (queued)</span>
+
+<span class="comment"># Urgent tasks jump the queue</span>
+<span class="prompt">/urgent</span> production API returning 500 errors
+<span class="output">&#9888; URGENT task: 017-prod-api-500.md (priority 10, queued)</span>
+
+<span class="comment"># Check pipeline status</span>
+<span class="prompt">/status</span>
+<span class="output">Active: 1 | Queue: 2 | Done today: 5 | Cost: $3.42</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Bot commands: <code>/task</code>, <code>/code</code>, <code>/urgent</code>, <code>/status</code>, <code>/stop</code></li>
+            <li>Receives completion/failure notifications with summaries</li>
+            <li>Long-polling listener runs as background daemon</li>
+            <li>Auto-infers repo from context (same as CLI smart mode)</li>
+            <li>Works from any device with Telegram (phone, tablet, desktop)</li>
+        </ul>
+    </div>
+
+    <div class="feature-box purple">
+        <h4>9. Live Stream Viewer (Real-Time Claude Visibility)</h4>
+        <p style="margin-bottom: 0.75rem;">Watch Claude's tool calls, thinking, and output in real-time as tasks execute &mdash; from the terminal or the web dashboard via Server-Sent Events.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="prompt">$</span> pipeline live 015
+<span class="output">&#9472;&#9472; Live: 015-fix-login-button &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;
+
+  &#9881; Read src/components/LoginButton.tsx
+  &#9881; Grep "button.*mobile" in src/
+  &#128196; "The issue is the touch target size..."
+  &#9881; Edit src/components/LoginButton.tsx
+  &#9881; Bash: npm test -- --grep "login"
+  &#128196; "Fixed. The button now has proper..."
+
+  &#9473; Result: success
+    Cost: $0.42 | Duration: 1m 23s</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Parses <code>stream-output.jsonl</code> (Claude's <code>--output-format stream-json</code>)</li>
+            <li>Shows tool calls with icons: &#9881; Bash, &#128196; Read, &#9998; Edit, &#128269; Grep</li>
+            <li>Displays thinking blocks, text output, and final result</li>
+            <li>Terminal mode with <code>--follow</code> (tails active tasks automatically)</li>
+            <li>Web dashboard streams via SSE (EventSource API) &mdash; zero refresh</li>
+            <li>Cost and duration counters update in real-time</li>
+        </ul>
+    </div>
+
+    <div class="feature-box yellow">
+        <h4>10. Web Dashboard (Full Control Panel)</h4>
+        <p style="margin-bottom: 0.75rem;">A single-page web interface at <code>localhost:7778</code> that provides complete visibility and control over the pipeline &mdash; create tasks, watch Claude work, manage the queue.</p>
+        <div class="code-block" style="margin-top: 1rem;">
+            <span class="lang-tag">terminal</span>
+            <pre><span class="prompt">$</span> pipeline dashboard
+<span class="output">Dashboard running at http://localhost:7778 (PID 12345)</span>
+
+<span class="comment"># Features visible in the UI:</span>
+<span class="output">  &#9632; Service status (watcher, telegram bot)
+  &#9632; Stat cards: active/queue/pending/done/failed/cost
+  &#9632; Task list with status badges and context menus
+  &#9632; Live stream panel (SSE) for active tasks
+  &#9632; Create task modal (type, repo, priority)
+  &#9632; One-click: stop, retry, resume, delete, move</span></pre>
+        </div>
+        <ul style="margin-top: 0.75rem;">
+            <li>Single Python file, zero external dependencies (stdlib HTTP server)</li>
+            <li>Unified server: static files + REST API + SSE streaming on one port</li>
+            <li>Real-time task stream via Server-Sent Events</li>
+            <li>Task CRUD: create, run, stop, retry, resume, move, delete</li>
+            <li>Service management: start/stop watcher and Telegram bot</li>
+            <li>Auto-refresh every 5 seconds with manual dispatch trigger</li>
+            <li>Dark theme, responsive layout, no build step</li>
+        </ul>
+    </div>
+</section>
+
+<!-- Architecture Diagram -->
+<section id="architecture" class="fade-in">
+    <h2>Architecture</h2>
+    <p class="section-subtitle">The system is built on three principles: filesystem as message bus, process isolation per task, and graceful failure with resumption.</p>
+
+    <div class="diagram-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph USER["You (Human)"]
+        CLI["pipeline add\n(plain English)"]
+        EDITOR["Text Editor / IDE"]
+        DIRECT["Direct file drop"]
+        TELEGRAM_IN["Telegram Bot\n(@bkarkitech_bot)"]
+        DASHBOARD_IN["Web Dashboard\n(localhost:7778)"]
+    end
+
+    subgraph AI_GEN["Intelligent Generator"]
+        HAIKU["Claude Haiku\n($0.005/call)"]
+        INFER["Type/Repo/Priority\nInference"]
+        FALLBACK["Dumb Fallback\n(no AI needed)"]
+    end
+
+    subgraph QUEUE_LAYER["Task Queue Layer"]
+        QUEUE["queue/\n(auto-pickup)"]
+        PENDING["pending/\n(manual kick)"]
+        DEPS["Dependency Resolver\n(depends_on / blocks)"]
+    end
+
+    subgraph SCHEDULING["Scheduling Layer"]
+        CRON["Cron Matcher\n(5-field expressions)"]
+        SCHED_STATE["Schedule State\n(.schedules/)"]
+    end
+
+    subgraph DETECTION["Detection Layer"]
+        WATCHMAN["Watchman\n(filesystem events)"]
+        LAUNCHD["launchd\n(keeps alive)"]
+        SWEEP["Stale Task Sweep\n(60s interval)"]
+    end
+
+    subgraph EXECUTION["Execution Engine"]
+        DISPATCHER["dispatcher.sh"]
+        LOCK["Lock Manager\n(noclobber atomic)"]
+        SESSION["Session Manager\n(UUID tracking)"]
+        CONFIG["config.yml"]
+        DEP_CHECK["Dependency Gate\n(blocks until ready)"]
+    end
+
+    subgraph CHECKPOINT["Checkpoint Layer"]
+        STATE["state/\n(current.json)"]
+        GITSNAP["Git Snapshots"]
+        ATTEMPTS["Attempt History\n(attempts.jsonl)"]
+        COST["Cost Tracking\n(pipeline cost)"]
+    end
+
+    subgraph CLAUDE_LAYER["Claude Code"]
+        FRESH["Fresh Mode\n(--session-id)"]
+        RESUME["Resume Mode\n(--resume)"]
+        RECONSTRUCT["Reconstruct Mode\n(context injection)"]
+    end
+
+    subgraph RESULTS["Results"]
+        DONE["done/"]
+        FAILED["failed/\n(resumable)"]
+        LOGS["logs/"]
+        LIVE["Live Stream\n(stream-output.jsonl)"]
+    end
+
+    subgraph NOTIFICATIONS["Notification System"]
+        DESKTOP["Desktop\n(osascript)"]
+        TELEGRAM["Telegram Bot\n(Bot API)"]
+        EMAIL["Email\n(sendmail/SMTP)"]
+        WEBHOOK["Webhook\n(POST JSON)"]
+    end
+
+    subgraph DASHBOARD["Web Dashboard Server (port 7778)"]
+        API["api-server.py\n(Python stdlib HTTP)"]
+        SSE["SSE Stream\n(GET /api/stream)"]
+        STATIC["Static UI\n(dashboard/index.html)"]
+        STATUS_GEN["generate-status.sh\n(status.json writer)"]
+    end
+
+    %% Flow
+    CLI --> HAIKU
+    HAIKU --> INFER
+    INFER --> QUEUE
+    CLI -->|"--dumb"| FALLBACK
+    FALLBACK --> QUEUE
+    EDITOR --> QUEUE
+    DIRECT --> QUEUE
+    CLI -->|"--no-auto"| PENDING
+
+    %% Scheduling
+    PENDING --> CRON
+    CRON --> SCHED_STATE
+    CRON -->|"schedule matches"| QUEUE
+
+    %% Dependencies
+    QUEUE --> DEPS
+    DEPS -->|"deps satisfied"| WATCHMAN
+    DEPS -->|"deps pending"| PENDING
+
+    WATCHMAN --> DISPATCHER
+    LAUNCHD --> WATCHMAN
+
+    DISPATCHER --> LOCK
+    DISPATCHER --> SESSION
+    DISPATCHER --> CONFIG
+    DISPATCHER --> DEP_CHECK
+    DEP_CHECK -->|"all deps done"| SESSION
+    SESSION --> STATE
+
+    STATE --> FRESH
+    STATE --> RESUME
+    STATE --> RECONSTRUCT
+    FRESH --> DONE
+    FRESH --> FAILED
+    RESUME --> DONE
+    RESUME --> FAILED
+
+    FAILED -->|"pipeline resume"| QUEUE
+    DONE --> DESKTOP
+    DONE --> TELEGRAM
+    DONE --> EMAIL
+    DONE --> WEBHOOK
+    FAILED --> DESKTOP
+    FAILED --> TELEGRAM
+
+    DISPATCHER --> GITSNAP
+    DISPATCHER --> ATTEMPTS
+    DISPATCHER --> LOGS
+    DISPATCHER --> COST
+
+    %% Telegram input
+    TELEGRAM_IN -->|"/task, /code, /urgent"| QUEUE
+    DASHBOARD_IN -->|"Create/Run/Retry"| API
+    API --> DISPATCHER
+    API --> QUEUE
+
+    %% Live stream
+    FRESH --> LIVE
+    RESUME --> LIVE
+    LIVE --> SSE
+    SSE --> STATIC
+
+    %% generate-status.sh triggered after every task event
+    DONE --> STATUS_GEN
+    FAILED --> STATUS_GEN
+    STATUS_GEN --> STATIC
+
+    %% Stale sweep
+    SWEEP --> DONE
+    SWEEP --> FAILED
+    LAUNCHD --> SWEEP
+
+    %% Styling
+    style USER fill:#1a2332,stroke:#30363d,color:#e6edf3
+    style AI_GEN fill:#1a2332,stroke:#3fb950,color:#e6edf3
+    style QUEUE_LAYER fill:#1a2332,stroke:#30363d,color:#e6edf3
+    style SCHEDULING fill:#1a2332,stroke:#d29922,color:#e6edf3
+    style DETECTION fill:#1a2332,stroke:#30363d,color:#e6edf3
+    style EXECUTION fill:#1a2332,stroke:#30363d,color:#e6edf3
+    style CHECKPOINT fill:#1a2332,stroke:#bc8cff,color:#e6edf3
+    style CLAUDE_LAYER fill:#1a2332,stroke:#58a6ff,color:#e6edf3
+    style RESULTS fill:#1a2332,stroke:#30363d,color:#e6edf3
+    style NOTIFICATIONS fill:#1a2332,stroke:#f97583,color:#e6edf3
+    style DASHBOARD fill:#1a2332,stroke:#58a6ff,color:#e6edf3
+        </pre>
+    </div>
+
+    <h3>Three Execution Modes</h3>
+    <div class="diagram-container">
+        <pre class="mermaid">
+flowchart LR
+    subgraph MODES["Execution Modes"]
+        direction TB
+        F["Fresh\n(first run)"]
+        R["Resume\n(--resume session-id)"]
+        RC["Reconstruct\n(session lost)"]
+    end
+
+    NEW["New Task"] --> F
+    TIMEOUT["Timeout/Crash\n(session valid)"] --> R
+    EXPIRED["Session expired\nor corrupted"] --> RC
+
+    F -->|"UUID generated"| EXEC["Claude executes"]
+    R -->|"Picks up where\nit left off"| EXEC
+    RC -->|"Git state + logs\ninjected as context"| EXEC
+
+    style F fill:#21262d,stroke:#3fb950,color:#e6edf3
+    style R fill:#21262d,stroke:#58a6ff,color:#e6edf3
+    style RC fill:#21262d,stroke:#d29922,color:#e6edf3
+        </pre>
+    </div>
+</section>
+
+<!-- Getting Started -->
+<section id="getting-started" class="fade-in">
+    <h2>Getting Started</h2>
+    <p class="section-subtitle">Everything you need to run the pipeline on your machine.</p>
+
+    <h3>Prerequisites</h3>
+    <table>
+        <tr><th>Requirement</th><th>Details</th><th>Install</th></tr>
+        <tr><td>macOS</td><td>For launchd persistence and notifications</td><td>Built-in</td></tr>
+        <tr><td>Claude Code CLI</td><td>v2.1+ with <code>--print</code> mode support</td><td><code>npm install -g @anthropic-ai/claude-code</code></td></tr>
+        <tr><td>Watchman (optional)</td><td>Instant file detection (falls back to polling)</td><td><code>brew install watchman</code></td></tr>
+        <tr><td>jq</td><td>JSON processing for state management</td><td><code>brew install jq</code></td></tr>
+        <tr><td>API Access</td><td>Valid Anthropic API key configured in Claude</td><td>Via <code>claude config</code></td></tr>
+    </table>
+
+    <h3 style="margin-top: 2rem;">Installation</h3>
+    <p style="color: var(--text-dim); margin-bottom: 1rem;">The pipeline is self-contained at <code>~/.claude-pipeline/</code>. No package manager needed.</p>
+
+    <div class="install-steps">
+        <div class="install-step">
+            <h4>Verify Claude Code is installed and authenticated</h4>
+            <p><code>claude --version</code> &mdash; should return v2.1+ and be able to run <code>claude -p "hello"</code></p>
+        </div>
+        <div class="install-step">
+            <h4>Ensure the pipeline directory exists</h4>
+            <p>All source lives at <code>~/.claude-pipeline/</code>. The directory structure is auto-created. Verify with <code>ls ~/.claude-pipeline/bin/</code></p>
+        </div>
+        <div class="install-step">
+            <h4>Add pipeline to your PATH</h4>
+            <p>Symlink the CLI: <code>ln -sf ~/.claude-pipeline/bin/pipeline ~/.local/bin/pipeline</code><br>
+            Then verify: <code>pipeline help</code></p>
+        </div>
+        <div class="install-step">
+            <h4>Configure your repositories</h4>
+            <p>Edit <code>~/.claude-pipeline/config.yml</code> and add your repos under the <code>repos:</code> section:</p>
+            <div class="code-block" style="margin-top: 0.5rem;">
+                <pre><span class="keyword">repos:</span>
+  <span class="string">my-app</span>: /Users/you/Projects/my-app
+  <span class="string">backend</span>: /Users/you/Projects/backend
+  <span class="string">docs</span>: /Users/you/Projects/documentation</pre>
+            </div>
+        </div>
+        <div class="install-step">
+            <h4>Start the watcher</h4>
+            <p><code>pipeline watch</code> &mdash; starts the filesystem watcher that auto-processes queued tasks.</p>
+        </div>
+        <div class="install-step">
+            <h4>(Optional) Enable persistence across reboots</h4>
+            <p>Load the launchd service: <code>launchctl load ~/Library/LaunchAgents/com.bkarki.claude-pipeline.plist</code><br>
+            The watcher will now auto-start at login and survive crashes.</p>
+        </div>
+    </div>
+
+    <h3 style="margin-top: 2rem;">Quick Test</h3>
+    <div class="code-block">
+        <span class="lang-tag">terminal</span>
+        <pre><span class="comment"># Create your first task (AI-powered)</span>
+<span class="prompt">$</span> pipeline add "list all TODO comments in my-app" <span class="flag">--preview</span>
+
+<span class="comment"># The --preview flag shows what the AI generated before queuing</span>
+<span class="comment"># Press Y to confirm, n to cancel, e to edit</span>
+
+<span class="comment"># Check status</span>
+<span class="prompt">$</span> pipeline status
+
+<span class="comment"># View results when done</span>
+<span class="prompt">$</span> pipeline view 001</pre>
+    </div>
+</section>
+
+<!-- How It Works (detailed flow) -->
+<section id="how-it-works" class="fade-in">
+    <h2>How It Works</h2>
+    <p class="section-subtitle">The complete execution flow from plain English to results.</p>
+
+    <div class="flow-steps">
+        <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+                <h4>Task Creation (Intelligent)</h4>
+                <p>You run <code>pipeline add "your request in plain English"</code>. Claude Haiku analyzes your words and generates a structured .md file with YAML frontmatter (type, repo, priority, model, budget, branch) plus a detailed body with context and acceptance criteria. Takes 2-4 seconds, costs ~$0.005.</p>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+                <h4>Detection & Queuing</h4>
+                <p>The task file lands in <code>queue/</code>. Watchman instantly detects it and triggers the dispatcher. A periodic sweep every 30s catches anything missed. Tasks with <code>auto: false</code> go to <code>pending/</code> instead, waiting for <code>pipeline run</code>.</p>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+                <h4>Session Initialization</h4>
+                <p>The dispatcher generates a UUID session ID, captures git state (branch, recent commits, uncommitted changes), writes the initial state file to <code>state/&lt;task&gt;/current.json</code>, and acquires an atomic lock.</p>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+                <h4>Claude Execution</h4>
+                <p>Claude Code is invoked with <code>--session-id</code> (enabling resumption), the task body as prompt, CLAUDE.md as system prompt, configured model/effort/budget, and a background watchdog enforcing the timeout. Output is captured as stream-json for cost tracking.</p>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">5</div>
+            <div class="step-content">
+                <h4>Result Handling & Checkpointing</h4>
+                <p><strong>Success:</strong> Task moves to <code>done/</code>, notification sent. <strong>Failure/Timeout:</strong> State file updated with <code>resumable: true</code>, git state re-captured, task moves to <code>failed/</code> with session ID in frontmatter. Budget used is tracked for accumulation.</p>
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="step-num">6</div>
+            <div class="step-content">
+                <h4>Resumption (if needed)</h4>
+                <p>Run <code>pipeline resume &lt;task&gt;</code>. The dispatcher validates the saved session, uses <code>--resume &lt;session-id&gt;</code> so Claude has full conversation history, and sends "Continue where you left off." If the session is expired, context reconstruction injects git state + log tail into a fresh session.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Directory Structure -->
+<section id="structure" class="fade-in">
+    <h2>Directory Structure</h2>
+    <p class="section-subtitle">Everything lives at <code>~/.claude-pipeline/</code>.</p>
+
+    <div class="file-tree">
+<span class="dir">~/.claude-pipeline/</span>
+&#9500;&#9472;&#9472; <span class="dir">bin/</span>                        <span class="comment"># Executable scripts (the engine)</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="file">dispatcher.sh</span>          <span class="comment"># Core engine: parsing, locking, execution, checkpointing</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="file">watcher.sh</span>             <span class="comment"># Filesystem watcher + orphan detection + stale sweep</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="file">pipeline</span>               <span class="comment"># CLI tool (user interface)</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="new">api-server.py</span>          <span class="comment"># Unified HTTP + API + SSE server (NEW)</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="new">live-stream.py</span>         <span class="comment"># Terminal live stream viewer (NEW)</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="new">telegram-bot.sh</span>        <span class="comment"># Two-way Telegram bot listener (NEW)</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="new">generate-status.sh</span>     <span class="comment"># Generates dashboard/status.json from fs state (NEW)</span>
+&#9474;   &#9492;&#9472;&#9472; <span class="file">serve-dashboard.sh</span>     <span class="comment"># Dashboard launcher (calls api-server.py)</span>
+&#9500;&#9472;&#9472; <span class="new">dashboard/</span>                  <span class="comment"># Web control panel (NEW)</span>
+&#9474;   &#9492;&#9472;&#9472; <span class="new">index.html</span>             <span class="comment"># Full SPA: task CRUD, live stream, service control</span>
+&#9500;&#9472;&#9472; <span class="dir">queue/</span>                      <span class="comment"># Drop tasks here -> auto-processed</span>
+&#9500;&#9472;&#9472; <span class="dir">pending/</span>                    <span class="comment"># Tasks awaiting manual kickoff</span>
+&#9500;&#9472;&#9472; <span class="dir">active/</span>                     <span class="comment"># Currently being processed</span>
+&#9500;&#9472;&#9472; <span class="dir">done/</span>                       <span class="comment"># Completed successfully</span>
+&#9500;&#9472;&#9472; <span class="dir">failed/</span>                     <span class="comment"># Failed (with explanation + resumable flag)</span>
+&#9500;&#9472;&#9472; <span class="dir">logs/</span>                       <span class="comment"># Per-task logs + global dispatcher log</span>
+&#9500;&#9472;&#9472; <span class="dir">locks/</span>                      <span class="comment"># Atomic lock files for concurrency</span>
+&#9500;&#9472;&#9472; <span class="new">state/</span>                      <span class="comment"># Session checkpointing + scheduling</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="new">&lt;task-name&gt;/</span>
+&#9474;   &#9474;   &#9500;&#9472;&#9472; <span class="new">current.json</span>       <span class="comment"># Session ID, attempt #, budget used, resumable flag</span>
+&#9474;   &#9474;   &#9500;&#9472;&#9472; <span class="new">attempts.jsonl</span>     <span class="comment"># Append-only history of each attempt</span>
+&#9474;   &#9474;   &#9500;&#9472;&#9472; <span class="new">git-snapshot.txt</span>   <span class="comment"># Branch, commits, uncommitted changes</span>
+&#9474;   &#9474;   &#9492;&#9472;&#9472; <span class="new">stream-output.jsonl</span><span class="comment"># Raw Claude stream (for live viewer + costs)</span>
+&#9474;   &#9492;&#9472;&#9472; <span class="new">.schedules/</span>            <span class="comment"># Cron schedule state (last_run timestamps)</span>
+&#9500;&#9472;&#9472; <span class="dir">templates/</span>                  <span class="comment"># Quick-start templates</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="file">code.md</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="file">research.md</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="file">writing.md</span>
+&#9474;   &#9492;&#9472;&#9472; <span class="file">general.md</span>
+&#9500;&#9472;&#9472; <span class="dir">docs/</span>                       <span class="comment"># Documentation (this file)</span>
+&#9500;&#9472;&#9472; <span class="dir">launchd/</span>                    <span class="comment"># macOS service definition</span>
+&#9474;   &#9492;&#9472;&#9472; <span class="file">com.bkarki.claude-pipeline.plist</span>
+&#9500;&#9472;&#9472; <span class="file">config.yml</span>                  <span class="comment"># Pipeline configuration</span>
+&#9492;&#9472;&#9472; <span class="file">CLAUDE.md</span>                   <span class="comment"># AI system prompt (worker persona)</span>
+    </div>
+</section>
+
+<!-- Interactive Demo -->
+<section id="demo" class="fade-in">
+    <h2>Interactive Demo</h2>
+    <p class="section-subtitle">See actual commands and their output. Click buttons to simulate workflows.</p>
+
+    <div class="demo-terminal" id="terminal">
+        <div><span class="prompt">~ $</span> <span class="command">pipeline add "fix the auth timeout bug in skykeep"</span></div>
+        <div class="output">
+&#9889; Generating task...
+&#10003; Task created: 007-fix-auth-timeout-bug-users-logging-out-after-5-min.md
+  -> Queued for auto-pickup
+  type= code  repo= skykeep  model= sonnet
+</div>
+        <div><span class="prompt">~ $</span> <span class="cursor"></span></div>
+    </div>
+
+    <div class="demo-buttons">
+        <button class="demo-btn" onclick="runDemo('smart-add')">Smart Add</button>
+        <button class="demo-btn" onclick="runDemo('research')">Research Task</button>
+        <button class="demo-btn" onclick="runDemo('status')">Status</button>
+        <button class="demo-btn" onclick="runDemo('resume')">Resume</button>
+        <button class="demo-btn" onclick="runDemo('state')">State</button>
+        <button class="demo-btn" onclick="runDemo('preview')">Preview Mode</button>
+    </div>
+</section>
+
+<!-- CLI Reference -->
+<section id="cli" class="fade-in">
+    <h2>CLI Reference</h2>
+    <p class="section-subtitle">The <code>pipeline</code> command is your control panel.</p>
+
+    <h3>Task Creation</h3>
+    <table>
+        <tr><th>Command</th><th>What It Does</th></tr>
+        <tr><td><code>pipeline add "description"</code></td><td>AI-powered task creation from plain English. Infers type, repo, priority, branch, budget automatically.</td></tr>
+        <tr><td><code>pipeline add "desc" --preview</code></td><td>Generate + show the task file for approval (Y/n/edit) before queuing</td></tr>
+        <tr><td><code>pipeline add "desc" --dumb</code></td><td>Skip AI. Creates a minimal task file (fallback/quick mode)</td></tr>
+        <tr><td><code>pipeline add "desc" --repo X --type Y</code></td><td>Provide hints to the AI (overrides inference)</td></tr>
+        <tr><td><code>pipeline add "desc" --depends-on X</code></td><td>Block until task X completes (comma-separated for multiple)</td></tr>
+        <tr><td><code>pipeline add "desc" --schedule "cron"</code></td><td>Run on a recurring cron schedule</td></tr>
+        <tr><td><code>pipeline add "desc" --no-auto</code></td><td>Send to pending/ instead of queue/ (requires manual <code>pipeline run</code>)</td></tr>
+        <tr><td><code>pipeline new [template]</code></td><td>Open a template (code/research/writing/general) in $EDITOR for a detailed task</td></tr>
+    </table>
+
+    <h3 style="margin-top: 2rem;">Execution & Monitoring</h3>
+    <table>
+        <tr><th>Command</th><th>What It Does</th></tr>
+        <tr><td><code>pipeline run &lt;name&gt;</code></td><td>Execute a pending task (moves from pending/ to queue/)</td></tr>
+        <tr><td><code>pipeline dispatch</code></td><td>Manually trigger the dispatcher to process the queue now</td></tr>
+        <tr><td><code>pipeline status</code></td><td>Dashboard: watcher state, queue counts, active tasks, resumable failures</td></tr>
+        <tr><td><code>pipeline list [dir]</code></td><td>List tasks in queue/active/pending/done/failed/all</td></tr>
+        <tr><td><code>pipeline view &lt;name&gt;</code></td><td>Show a task file + its execution log/output</td></tr>
+        <tr><td><code>pipeline logs [name]</code></td><td>View task-specific log or global dispatcher log</td></tr>
+    </table>
+
+    <h3 style="margin-top: 2rem;">Recovery & Resumption</h3>
+    <table>
+        <tr><th>Command</th><th>What It Does</th></tr>
+        <tr><td><code>pipeline resume &lt;name&gt;</code></td><td>Resume an interrupted task using its saved session (picks up where it left off)</td></tr>
+        <tr><td><code>pipeline retry &lt;name&gt;</code></td><td>Re-queue a failed task for fresh execution (discards session, starts over)</td></tr>
+        <tr><td><code>pipeline state &lt;name&gt;</code></td><td>View checkpoint state: session ID, attempts, git snapshot, budget used</td></tr>
+    </table>
+
+    <h3 style="margin-top: 2rem;">System Management</h3>
+    <table>
+        <tr><th>Command</th><th>What It Does</th></tr>
+        <tr><td><code>pipeline watch</code></td><td>Start or restart the filesystem watcher</td></tr>
+        <tr><td><code>pipeline stop</code></td><td>Stop the watcher process</td></tr>
+        <tr><td><code>pipeline costs [--csv|--report|--repo X]</code></td><td>Cost report: daily/weekly/monthly, per-repo, budget alerts, CSV/markdown export</td></tr>
+        <tr><td><code>pipeline deps</code></td><td>Show task dependency graph with status indicators</td></tr>
+        <tr><td><code>pipeline schedule [list|remove]</code></td><td>List or manage scheduled/recurring tasks</td></tr>
+        <tr><td><code>pipeline notify-test [channel]</code></td><td>Test notification channels (telegram/email/webhook/all)</td></tr>
+        <tr><td><code>pipeline dashboard [port]</code></td><td>Open the web dashboard (default: 7778)</td></tr>
+        <tr><td><code>pipeline clean [days]</code></td><td>Remove completed/failed tasks older than N days (default: 30)</td></tr>
+        <tr><td><code>pipeline help</code></td><td>Show all commands and examples</td></tr>
+    </table>
+</section>
+
+<!-- Task Format -->
+<section id="task-format" class="fade-in">
+    <h2>Task File Format</h2>
+    <p class="section-subtitle">Every task is a Markdown file with YAML frontmatter. The AI generates these for you, but you can also write them manually.</p>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab(event, 'tab-ai')">AI-Generated</button>
+        <button class="tab-btn" onclick="switchTab(event, 'tab-manual')">Manual (Code)</button>
+        <button class="tab-btn" onclick="switchTab(event, 'tab-research')">Manual (Research)</button>
+    </div>
+
+    <div id="tab-ai" class="tab-content active">
+        <div class="code-block">
+            <span class="lang-tag">AI-generated from: "fix the auth timeout"</span>
+            <pre><span class="comment">---</span>
+<span class="keyword">type:</span> <span class="string">code</span>
+<span class="keyword">repo:</span> <span class="string">skykeep</span>
+<span class="keyword">priority:</span> <span class="string">8</span>
+<span class="keyword">auto:</span> <span class="string">true</span>
+<span class="keyword">model:</span> <span class="string">sonnet</span>
+<span class="keyword">effort:</span> <span class="string">high</span>
+<span class="keyword">timeout:</span> <span class="string">600</span>
+<span class="keyword">budget:</span> <span class="string">5.00</span>
+<span class="keyword">branch:</span> <span class="string">fix/auth-timeout-session</span>
+<span class="comment">---</span>
+
+# Fix Auth Session Timeout Bug
+
+Users are being logged out after 5 minutes instead of the intended
+30-minute session timeout. This is a critical UX issue.
+
+## Context
+The session TTL appears to be configured incorrectly in the JWT
+settings or token refresh logic...
+
+## Acceptance Criteria
+- Sessions persist for 30 minutes of inactivity
+- JWT tokens issued with correct expiration
+- Token refresh triggers before expiry
+- All frontends respect the timeout consistently</pre>
+        </div>
+    </div>
+
+    <div id="tab-manual" class="tab-content">
+        <div class="code-block">
+            <span class="lang-tag">markdown</span>
+            <pre><span class="comment">---</span>
+<span class="keyword">type:</span> <span class="string">code</span>
+<span class="keyword">repo:</span> <span class="string">skykeep</span>
+<span class="keyword">priority:</span> <span class="string">5</span>
+<span class="keyword">auto:</span> <span class="string">true</span>
+<span class="keyword">model:</span> <span class="string">opus</span>
+<span class="keyword">effort:</span> <span class="string">max</span>
+<span class="keyword">timeout:</span> <span class="string">900</span>
+<span class="keyword">budget:</span> <span class="string">8.00</span>
+<span class="keyword">branch:</span> <span class="string">refactor/auth-module</span>
+<span class="comment">---</span>
+
+# Refactor authentication into shared module
+
+Extract auth logic from customer-app and admin-app
+into packages/shared-auth. Both apps duplicate the
+same JWT handling, refresh logic, and session management.
+
+## Requirements
+- Create packages/shared-auth with TypeScript
+- Move common auth utilities there
+- Update both apps to import from shared
+- Ensure all existing auth tests pass</pre>
+        </div>
+    </div>
+
+    <div id="tab-research" class="tab-content">
+        <div class="code-block">
+            <span class="lang-tag">markdown</span>
+            <pre><span class="comment">---</span>
+<span class="keyword">type:</span> <span class="string">research</span>
+<span class="keyword">priority:</span> <span class="string">3</span>
+<span class="keyword">auto:</span> <span class="string">true</span>
+<span class="keyword">timeout:</span> <span class="string">300</span>
+<span class="keyword">budget:</span> <span class="string">2.00</span>
+<span class="comment">---</span>
+
+# Compare WebSocket libraries for Node.js
+
+Evaluate ws, Socket.IO, and uWebSockets.js for our
+real-time notification system.
+
+## Evaluate
+- Performance (connections/sec, memory)
+- TypeScript support
+- Clustering/scaling
+- Community health</pre>
+        </div>
+    </div>
+
+    <h3 style="margin-top: 2rem;">Frontmatter Reference</h3>
+    <table>
+        <tr><th>Field</th><th>Values</th><th>Default</th><th>Purpose</th></tr>
+        <tr><td><code>type</code></td><td>code, research, review, writing, general</td><td>general</td><td>Determines Claude's behavior mode</td></tr>
+        <tr><td><code>repo</code></td><td>Name from config.yml or absolute path</td><td>(home dir)</td><td>Working directory for Claude</td></tr>
+        <tr><td><code>priority</code></td><td>1-10</td><td>5</td><td>Processing order (higher = more urgent)</td></tr>
+        <tr><td><code>auto</code></td><td>true / false</td><td>true</td><td>Auto-pickup vs manual kick</td></tr>
+        <tr><td><code>model</code></td><td>sonnet, opus, haiku</td><td>sonnet</td><td>Which Claude model to use</td></tr>
+        <tr><td><code>effort</code></td><td>low, medium, high, max</td><td>max</td><td>Claude's reasoning depth</td></tr>
+        <tr><td><code>timeout</code></td><td>seconds</td><td>600</td><td>Kill task after this duration</td></tr>
+        <tr><td><code>budget</code></td><td>USD amount</td><td>5.00</td><td>Max API spend per task</td></tr>
+        <tr><td><code>branch</code></td><td>branch name</td><td>(auto-generated)</td><td>Git branch for code tasks</td></tr>
+        <tr><td><code>depends_on</code></td><td>comma-separated task names</td><td>(none)</td><td>Tasks that must complete first</td></tr>
+        <tr><td><code>schedule</code></td><td>5-field cron expression</td><td>(none)</td><td>Recurring execution schedule</td></tr>
+    </table>
+</section>
+
+<!-- Source Code -->
+<section id="source" class="fade-in">
+    <h2>Source Code & Project Structure</h2>
+    <p class="section-subtitle">The pipeline is a living project designed to grow. Here's where everything lives.</p>
+
+    <div class="feature-box">
+        <h4>Primary Location</h4>
+        <p><code>~/.claude-pipeline/</code> &mdash; all source, config, data, and docs live here. No external dependencies, no build step.</p>
+    </div>
+
+    <h3>Key Source Files</h3>
+    <table>
+        <tr><th>File</th><th>Lines</th><th>Responsibility</th></tr>
+        <tr><td><code>bin/pipeline</code></td><td>~1500</td><td>CLI interface, task generator, costs, deps, schedule, notify-test, state commands</td></tr>
+        <tr><td><code>bin/dispatcher.sh</code></td><td>~960</td><td>Execution engine: session mgmt, checkpointing, notifications, dependency resolution</td></tr>
+        <tr><td><code>bin/watcher.sh</code></td><td>~420</td><td>Filesystem watcher, cron scheduler, orphan detection, stale sweep, Watchman/polling fallback</td></tr>
+        <tr><td><code>bin/api-server.py</code></td><td>~700</td><td>Unified HTTP server: static dashboard files, REST API (/api/status, /api/tasks, /api/queue), SSE stream</td></tr>
+        <tr><td><code>bin/telegram-bot.sh</code></td><td>~280</td><td>Long-poll Telegram listener: receives /task /code /urgent /status commands, creates task files</td></tr>
+        <tr><td><code>bin/live-stream.py</code></td><td>~200</td><td>Terminal live stream viewer: parses stream-output.jsonl, shows tool calls in real time, --follow mode</td></tr>
+        <tr><td><code>bin/generate-status.sh</code></td><td>~215</td><td>Generates dashboard/status.json from filesystem state; called after every task event</td></tr>
+        <tr><td><code>config.yml</code></td><td>~80</td><td>All configuration: repos, defaults, checkpointing, notifications, webhooks</td></tr>
+        <tr><td><code>CLAUDE.md</code></td><td>~90</td><td>Worker persona: tells Claude how to behave autonomously + resumption rules</td></tr>
+        <tr><td><code>dashboard/index.html</code></td><td>~900</td><td>Single-page control panel: task list, live stream panel, create/retry/resume/stop/delete</td></tr>
+    </table>
+
+    <h3 style="margin-top: 2rem;">Design Principles (for contributors)</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; margin-top: 1rem;">
+        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem;">
+            <h4 style="color: var(--green); margin-bottom: 0.5rem;">Filesystem is the Bus</h4>
+            <p style="color: var(--text-dim); font-size: 0.85rem;">No databases, no message queues. Files move between directories to represent state transitions. Anyone can inspect state with <code>ls</code> and <code>cat</code>.</p>
+        </div>
+        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem;">
+            <h4 style="color: var(--green); margin-bottom: 0.5rem;">Bash-Native</h4>
+            <p style="color: var(--text-dim); font-size: 0.85rem;">No Python, no Node for infrastructure. Pure bash + standard Unix tools (jq, awk, sed). Easy to debug, extend, and understand.</p>
+        </div>
+        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem;">
+            <h4 style="color: var(--green); margin-bottom: 0.5rem;">Graceful Degradation</h4>
+            <p style="color: var(--text-dim); font-size: 0.85rem;">AI unavailable? Falls back to dumb mode. Watchman not installed? Polls. Session expired? Reconstructs from git. Every feature has a fallback.</p>
+        </div>
+        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem;">
+            <h4 style="color: var(--green); margin-bottom: 0.5rem;">Zero Trust in External State</h4>
+            <p style="color: var(--text-dim); font-size: 0.85rem;">Always validate sessions before resume. Always check PID liveness. Always capture git state. Assume any process can die at any time.</p>
+        </div>
+    </div>
+
+    <h3 style="margin-top: 2rem;">Extending the Pipeline</h3>
+    <p style="color: var(--text-dim); margin-bottom: 1rem;">The architecture is designed for extension. Here's how to add new capabilities:</p>
+    <table>
+        <tr><th>Want to...</th><th>Modify</th><th>Pattern</th></tr>
+        <tr><td>Add a new task type</td><td><code>CLAUDE.md</code></td><td>Add a section under "For [Type] Tasks" describing behavior</td></tr>
+        <tr><td>Add a new CLI command</td><td><code>bin/pipeline</code></td><td>Add <code>cmd_yourcommand()</code> function + case in router</td></tr>
+        <tr><td>Add a new repo</td><td><code>config.yml</code></td><td>Add line under <code>repos:</code></td></tr>
+        <tr><td>Change AI behavior</td><td><code>bin/pipeline</code> <code>_build_generator_prompt()</code></td><td>Modify the prompt given to Haiku for task generation</td></tr>
+        <tr><td>Add notification channel</td><td><code>bin/dispatcher.sh</code> <code>notify()</code></td><td>Add <code>_notify_yourchannel()</code> + call from <code>notify()</code></td></tr>
+        <tr><td>Add new webhook event</td><td><code>config.yml</code> + dispatcher</td><td>Add event name to webhook events filter, emit from appropriate spot</td></tr>
+        <tr><td>Add frontmatter field</td><td><code>bin/dispatcher.sh</code></td><td>Parse with <code>frontmatter_get</code> in <code>process_task()</code>, act on value</td></tr>
+        <tr><td>Add REST API endpoint</td><td><code>bin/api-server.py</code></td><td>Add path match in <code>PipelineHandler.do_GET/do_POST</code>, return JSON</td></tr>
+        <tr><td>Add new dashboard field</td><td><code>bin/generate-status.sh</code></td><td>Add field to JSON assembly at bottom of script; read it in <code>dashboard/index.html</code></td></tr>
+    </table>
+</section>
+
+<!-- Roadmap -->
+<section id="roadmap" class="fade-in">
+    <h2>Roadmap</h2>
+    <p class="section-subtitle">What's built, what's next, and where this is heading.</p>
+
+    <div class="roadmap">
+        <div class="roadmap-item done">
+            <h4>Level 1: Core Pipeline &#10003;</h4>
+            <p>File-based queue, dispatcher, watcher, CLI, launchd persistence, macOS notifications, concurrency control, timeout handling, retry mechanism.</p>
+        </div>
+        <div class="roadmap-item done">
+            <h4>Level 2: Session Checkpointing &#10003;</h4>
+            <p>Session persistence with UUIDs, resume after interruption, git state capture, attempt tracking, budget accumulation, orphan detection, context reconstruction fallback.</p>
+        </div>
+        <div class="roadmap-item done">
+            <h4>Level 3: Intelligent Task Generator &#10003;</h4>
+            <p>AI-powered task file creation from plain English. Infers type, repo, priority, branch, budget. Preview mode. Graceful fallback to dumb mode.</p>
+        </div>
+        <div class="roadmap-item done">
+            <h4>Level 4: Orchestration & Notifications &#10003;</h4>
+            <p>Task dependencies with auto-unblocking, scheduled/recurring tasks via cron, multi-channel notifications (Telegram/Email/Webhook), cost reporting with budget alerts, dependency graph visualization.</p>
+        </div>
+        <div class="roadmap-item done">
+            <h4>Level 5: Real-Time Visibility & Control &#10003;</h4>
+            <p>Two-way Telegram bot (receive tasks via /task, /code, /urgent), live stream viewer (watch Claude's tool calls in real-time), full web dashboard with task CRUD and SSE streaming, stale task auto-recovery.</p>
+        </div>
+        <div class="roadmap-item next">
+            <h4>Level 6: Multi-Agent & Advanced Integrations (Next)</h4>
+            <p>Agent-to-agent communication (one task spawns sub-tasks), priority queue ordering, task chaining (output of one feeds into next), Slack/Discord integration bots.</p>
+        </div>
+        <div class="roadmap-item future">
+            <h4>Level 7: Platform</h4>
+            <p>Mobile task creation (via file sync), multi-machine coordination, plugin system for new task types, approval workflows for sensitive operations, team features.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Technical Details -->
+<section id="technical" class="fade-in">
+    <h2>Technical Details</h2>
+
+    <h3>Safety & Concurrency</h3>
+    <table>
+        <tr><th>Concern</th><th>Solution</th></tr>
+        <tr><td>Double-processing</td><td>Atomic lock via <code>set -o noclobber; echo $$ > lockfile</code></td></tr>
+        <tr><td>Concurrency limit</td><td>Count files in <code>active/</code> before processing (default max: 2)</td></tr>
+        <tr><td>Stale locks</td><td>Auto-cleaned if PID is dead (checked on startup via orphan detection)</td></tr>
+        <tr><td>Runaway tasks</td><td>Background watchdog kills Claude after configured timeout</td></tr>
+        <tr><td>Budget explosion</td><td><code>--max-budget-usd</code> per task + accumulated tracking across resume attempts</td></tr>
+        <tr><td>Lost sessions</td><td>Context reconstruction fallback: git state + log tail injected into fresh session</td></tr>
+        <tr><td>Orphaned processes</td><td>Watcher detects dead PIDs on startup, marks tasks resumable, moves to failed/</td></tr>
+        <tr><td>Stale active tasks</td><td>60-second sweep checks lock PIDs in active/; dead processes auto-moved to done/ or failed/</td></tr>
+        <tr><td>Dashboard security</td><td>API server binds to <code>127.0.0.1</code> only — no remote access without explicit tunneling</td></tr>
+        <tr><td>Telegram security</td><td>Bot rejects all messages not from the configured <code>chat_id</code> — other users can't create tasks</td></tr>
+    </table>
+
+    <h3 style="margin-top: 2rem;">REST API Endpoints (api-server.py, port 7778)</h3>
+    <table>
+        <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+        <tr><td><code>GET</code></td><td><code>/</code></td><td>Serve <code>dashboard/index.html</code></td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/status</code></td><td>Returns <code>dashboard/status.json</code> (counts, active tasks, recent done/failed, costs)</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/tasks</code></td><td>Full task list across all directories with frontmatter metadata</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/queue</code></td><td>Create a new task and drop it in <code>queue/</code>; body: <code>{"title":"…","type":"…","repo":"…","priority":5}</code></td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/dispatch</code></td><td>Manually trigger the dispatcher (same as <code>pipeline dispatch</code>)</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/tasks/:name/stop</code></td><td>Kill a running task by sending SIGTERM to its lock PID</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/tasks/:name/retry</code></td><td>Move a failed task back to <code>queue/</code> for fresh execution</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/tasks/:name/resume</code></td><td>Re-queue a failed task with its saved session ID for resumption</td></tr>
+        <tr><td><code>DELETE</code></td><td><code>/api/tasks/:name</code></td><td>Delete a task file from its current directory</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/stream</code></td><td>Server-Sent Events stream of <code>stream-output.jsonl</code> for a named active task</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/logs/:name</code></td><td>Return the task-specific log file content</td></tr>
+    </table>
+
+    <h3 style="margin-top: 2rem;">Claude Invocation (v2 with Session Persistence)</h3>
+    <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <pre><span class="comment"># Fresh execution (first attempt):</span>
+cd /Users/you/Projects/your-repo
+claude <span class="flag">-p</span> <span class="flag">--verbose</span> \
+  <span class="flag">--dangerously-skip-permissions</span> \
+  <span class="flag">--session-id</span> <span class="string">"a1b2c3d4-e5f6-..."</span> \
+  <span class="flag">--model</span> <span class="string">sonnet</span> \
+  <span class="flag">--effort</span> <span class="string">max</span> \
+  <span class="flag">--max-budget-usd</span> <span class="string">5.00</span> \
+  <span class="flag">--output-format</span> <span class="string">stream-json</span> \
+  <span class="flag">--append-system-prompt-file</span> <span class="string">CLAUDE.md</span> \
+  <span class="string">"$TASK_BODY"</span>
+
+<span class="comment"># Resume execution (after interruption):</span>
+claude <span class="flag">--resume</span> <span class="string">"a1b2c3d4-e5f6-..."</span> \
+  <span class="flag">-p</span> <span class="flag">--verbose</span> \
+  <span class="flag">--dangerously-skip-permissions</span> \
+  <span class="flag">--model</span> <span class="string">sonnet</span> \
+  <span class="flag">--max-budget-usd</span> <span class="string">3.53</span> \  <span class="comment"># remaining budget</span>
+  <span class="flag">--output-format</span> <span class="string">stream-json</span> \
+  <span class="string">"Continue the task from where you left off."</span></pre>
+    </div>
+
+    <h3 style="margin-top: 2rem;">Configuration</h3>
+    <div class="code-block">
+        <span class="lang-tag">~/.claude-pipeline/config.yml</span>
+        <pre><span class="keyword">pipeline:</span>
+  <span class="keyword">max_concurrent:</span> <span class="string">2</span>
+  <span class="keyword">lock_timeout_seconds:</span> <span class="string">3600</span>
+  <span class="keyword">poll_interval_seconds:</span> <span class="string">5</span>
+
+<span class="keyword">defaults:</span>
+  <span class="keyword">model:</span> <span class="string">sonnet</span>
+  <span class="keyword">effort:</span> <span class="string">max</span>
+  <span class="keyword">timeout:</span> <span class="string">600</span>
+  <span class="keyword">budget:</span> <span class="string">5.00</span>
+  <span class="keyword">daily_budget:</span> <span class="string">25.00</span>    <span class="comment"># alerts when approaching</span>
+
+<span class="keyword">checkpointing:</span>
+  <span class="keyword">enabled:</span> <span class="string">true</span>
+  <span class="keyword">session_max_age_days:</span> <span class="string">7</span>
+  <span class="keyword">max_attempts:</span> <span class="string">5</span>
+  <span class="keyword">min_budget_for_resume:</span> <span class="string">0.50</span>
+  <span class="keyword">capture_git_state:</span> <span class="string">true</span>
+
+<span class="keyword">repos:</span>
+  <span class="string">skykeep</span>: /Users/bkarki/Projects/skykeep
+  <span class="string">cafe-aapama</span>: /Users/bkarki/Projects/cafe-aapama
+  <span class="string">pic-preview</span>: /Users/bkarki/Projects/pic-preview
+
+<span class="keyword">notifications:</span>
+  <span class="keyword">enabled:</span> <span class="string">true</span>
+  <span class="keyword">sound:</span> <span class="string">Glass</span>
+  <span class="keyword">on_complete:</span> <span class="string">true</span>
+  <span class="keyword">on_failure:</span> <span class="string">true</span>
+  <span class="keyword">on_start:</span> <span class="string">false</span>
+  <span class="keyword">telegram:</span>
+    <span class="keyword">enabled:</span> <span class="string">false</span>
+    <span class="keyword">bot_token:</span> <span class="string">""</span>
+    <span class="keyword">chat_id:</span> <span class="string">""</span>
+  <span class="keyword">email:</span>
+    <span class="keyword">enabled:</span> <span class="string">false</span>
+    <span class="keyword">to:</span> <span class="string">""</span>
+    <span class="keyword">from:</span> <span class="string">claude-pipeline@localhost</span>
+  <span class="keyword">webhook:</span>
+    <span class="keyword">enabled:</span> <span class="string">false</span>
+    <span class="keyword">url:</span> <span class="string">""</span>
+    <span class="keyword">auth_header:</span> <span class="string">""</span>
+    <span class="keyword">events:</span> <span class="string">"complete,failure,timeout"</span></pre>
+    </div>
+</section>
+
+<footer>
+    <p>Claude Pipeline v5.0 &mdash; Built with Claude Code, May 2026</p>
+    <p style="margin-top: 0.5rem;">~6000 lines of bash + Python. No frameworks. No build step. Just files and intelligence.</p>
+    <p style="margin-top: 0.5rem; color: var(--text-dim);">Source: <code>~/.claude-pipeline/</code> | Docs: <code>~/.claude-pipeline/docs/architecture.html</code></p>
+</footer>
+
+<!-- Changelog -->
+<section id="changelog" class="fade-in">
+    <h2>Changelog</h2>
+    <p class="section-subtitle">Recent bug fixes and improvements. All changes are in the <code>~/.claude-pipeline/</code> source tree.</p>
+
+    <h3 style="margin-bottom: 1rem;">May 2026 &mdash; v5.0</h3>
+
+    <!-- Bug Fix 1: Telegram xargs -->
+    <div class="changelog-entry">
+        <div class="ch-header">
+            <span class="ch-badge bugfix">Bug Fix</span>
+            <h4>Telegram notifications broken by <code>xargs</code> choking on quoted config values</h4>
+        </div>
+        <div class="ch-file">File: <code>bin/dispatcher.sh</code> &mdash; <code>_notify_telegram()</code></div>
+        <p>
+            When reading <code>bot_token</code> and <code>chat_id</code> from <code>config.yml</code>, the values were
+            being piped through <code>xargs</code> for whitespace trimming. If the YAML value was quoted
+            (e.g. <code>bot_token: "123456:ABC-xyz"</code>), <code>xargs</code> would choke on the embedded colon and
+            special characters, silently returning an empty string. This caused every Telegram notification
+            to be silently skipped even with a valid configuration.
+        </p>
+        <div class="ch-diff">
+            <div class="ch-diff-block before">
+                <div class="diff-label">Before (broken)</div>
+                <pre>token=$(grep "bot_token:" "$CONFIG_FILE" \
+  | sed 's/.*bot_token:\s*//' \
+  | xargs)</pre>
+            </div>
+            <div class="ch-diff-block after">
+                <div class="diff-label">After (fixed)</div>
+                <pre>token=$(grep "bot_token:" "$CONFIG_FILE" \
+  | sed 's/.*bot_token:\s*//' \
+  | tr -d '"' \
+  | tr -d '[:space:]')</pre>
+            </div>
+        </div>
+        <p style="margin-top: 0.75rem;">
+            Same fix applied to <code>chat_id</code> extraction. <code>tr -d '"'</code> strips the surrounding quotes
+            first, then <code>tr -d '[:space:]'</code> strips whitespace — both operations are safe on any token value.
+        </p>
+    </div>
+
+    <!-- Bug Fix 2: generate-status.sh bare comma -->
+    <div class="changelog-entry">
+        <div class="ch-header">
+            <span class="ch-badge bugfix">Bug Fix</span>
+            <h4>Invalid JSON in <code>status.json</code> when failed tasks have no state directory</h4>
+        </div>
+        <div class="ch-file">File: <code>bin/generate-status.sh</code> &mdash; <code>recent_failed</code> assembly</div>
+        <p>
+            When a task in <code>failed/</code> had no corresponding <code>state/&lt;task&gt;/current.json</code>
+            (e.g. tasks that failed before checkpointing was introduced, or tasks manually dropped in),
+            the jq pipeline would emit a bare comma or incomplete JSON fragment into the <code>recent_failed</code>
+            array. The resulting <code>status.json</code> was malformed and caused the dashboard to show a blank
+            task list.
+        </p>
+        <p>
+            <strong>Fix:</strong> Added guards so that <code>local_reason</code>, <code>local_resumable</code>, and
+            <code>local_attempts</code> always have valid defaults before being passed to <code>jq --argjson</code>.
+            Boolean values are validated to be exactly <code>true</code> or <code>false</code>; numeric values
+            are validated to be digit-only strings. Invalid values fall back to <code>"unknown"</code>,
+            <code>false</code>, and <code>0</code> respectively.
+        </p>
+        <div class="ch-diff">
+            <div class="ch-diff-block before">
+                <div class="diff-label">Before (could emit bad JSON)</div>
+                <pre># No guards — jq --argjson with
+# empty/null values from missing
+# state files caused parse errors</pre>
+            </div>
+            <div class="ch-diff-block after">
+                <div class="diff-label">After (guarded)</div>
+                <pre>[[ "$local_resumable" == "true" || \
+   "$local_resumable" == "false" ]] \
+  || local_resumable="false"
+[[ "$local_attempts" =~ ^[0-9]+$ ]] \
+  || local_attempts=0</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bug Fix 3: generate-status.sh bare decimal costs -->
+    <div class="changelog-entry">
+        <div class="ch-header">
+            <span class="ch-badge bugfix">Bug Fix</span>
+            <h4>Invalid JSON: bare decimal cost values like <code>.277</code> (missing leading zero)</h4>
+        </div>
+        <div class="ch-file">File: <code>bin/generate-status.sh</code> &mdash; cost aggregation</div>
+        <p>
+            The <code>bc</code> utility omits the leading zero for decimal numbers less than 1
+            (e.g. it outputs <code>.277</code> instead of <code>0.277</code>). JSON does not permit bare
+            leading-decimal numbers — <code>.277</code> is invalid JSON. This caused the <code>costs</code>
+            object in <code>status.json</code> to be malformed whenever the accumulated cost was under
+            $1.00, breaking the dashboard cost display.
+        </p>
+        <div class="ch-diff">
+            <div class="ch-diff-block before">
+                <div class="diff-label">Before (could emit .277)</div>
+                <pre>total_cost=$(echo "$a + $b" | bc)
+# bc outputs: .277  ← invalid JSON</pre>
+            </div>
+            <div class="ch-diff-block after">
+                <div class="diff-label">After (leading-zero normalized)</div>
+                <pre>total_cost=$(printf '%s' "$total_cost" \
+  | sed 's/^\./0./')
+# outputs: 0.277  ← valid JSON</pre>
+            </div>
+        </div>
+        <p style="margin-top: 0.75rem;">
+            The <code>sed 's/^\./0./'</code> normalization is applied to <code>today_cost</code>,
+            <code>week_cost</code>, and <code>total_cost</code> immediately after the accumulation loop,
+            before they are interpolated into the final JSON heredoc.
+        </p>
+    </div>
+
+    <!-- Bug Fix 4: watcher.sh local outside function -->
+    <div class="changelog-entry">
+        <div class="ch-header">
+            <span class="ch-badge bugfix">Bug Fix</span>
+            <h4>Watcher crash-loop: <code>local</code> used outside a function in watchman mode</h4>
+        </div>
+        <div class="ch-file">File: <code>bin/watcher.sh</code> &mdash; watchman main loop</div>
+        <p>
+            In watchman mode, the watcher's main <code>while true</code> loop used <code>local</code>
+            to declare variables (e.g. <code>local now_wm</code>). In bash, <code>local</code> is only
+            valid inside a function body — using it in top-level script scope causes a non-zero exit,
+            which with <code>set -euo pipefail</code> immediately terminated the watcher process.
+            Since launchd restarts crashed processes, the watcher was entering a crash-loop, restarting
+            every ~10 seconds and never staying alive long enough to process tasks.
+        </p>
+        <div class="ch-diff">
+            <div class="ch-diff-block before">
+                <div class="diff-label">Before (crash on bash local)</div>
+                <pre>while true; do
+  sleep 30
+  local now_wm  # ← ERROR outside fn
+  now_wm=$(date +%s)
+  ...
+done</pre>
+            </div>
+            <div class="ch-diff-block after">
+                <div class="diff-label">After (plain variable)</div>
+                <pre>last_schedule_check_wm=0
+while true; do
+  sleep 30
+  now_wm=$(date +%s)  # no local
+  if (( now_wm - last_schedule_check_wm >= 60 )); then
+    ...
+  fi
+done</pre>
+            </div>
+        </div>
+        <p style="margin-top: 0.75rem;">
+            The fix replaces all <code>local</code> declarations in top-level scope (outside functions)
+            with plain variable assignments. The <code>last_schedule_check_wm</code> counter variable
+            was also moved outside the loop so it correctly accumulates across iterations.
+        </p>
+    </div>
+
+    <h3 style="margin-top: 2.5rem; margin-bottom: 1rem;">Earlier &mdash; v4.0 → v5.0 Feature Additions</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+        <div class="changelog-entry">
+            <div class="ch-header">
+                <span class="ch-badge feature">Feature</span>
+                <h4>Unified API Server (<code>api-server.py</code>)</h4>
+            </div>
+            <p>Replaced the simple static file server (<code>serve-dashboard.sh</code>) with a full Python HTTP server. Serves static dashboard files <em>and</em> a REST API on the same port (7778). Endpoints: <code>GET /api/status</code>, <code>GET /api/tasks</code>, <code>POST /api/queue</code> (create task), <code>POST /api/dispatch</code>, <code>GET /api/stream</code> (SSE). Binds to <code>127.0.0.1</code> only. Zero external dependencies (stdlib <code>http.server</code>).</p>
+        </div>
+        <div class="changelog-entry">
+            <div class="ch-header">
+                <span class="ch-badge feature">Feature</span>
+                <h4>Two-Way Telegram Bot (<code>telegram-bot.sh</code>)</h4>
+            </div>
+            <p>Long-polls the Telegram Bot API every 30 seconds. Accepts commands from a single authorized <code>chat_id</code>: <code>/task</code>, <code>/code</code>, <code>/research</code>, <code>/urgent</code> (priority 9), <code>/status</code>. Creates task files directly in <code>queue/</code> with auto-generated IDs. Mirrors the pipeline CLI's numbering scheme. Tracks message offsets in <code>state/.telegram_offset</code> to avoid re-processing. Also serves as the outbound Telegram notification channel (emojis: ✅ ❌ 🚀 ⏰ 🔄).</p>
+        </div>
+        <div class="changelog-entry">
+            <div class="ch-header">
+                <span class="ch-badge feature">Feature</span>
+                <h4>Live Stream Viewer (<code>live-stream.py</code>)</h4>
+            </div>
+            <p>Reads <code>state/&lt;task&gt;/stream-output.jsonl</code> (Claude's <code>--output-format stream-json</code> output) and renders it as a human-readable tool-call trace in the terminal. Shows Bash, Read, Edit, Grep tool calls with icons, displays text/thinking blocks, and emits a final cost+duration summary. <code>--follow</code> mode tails an in-progress task in real time.</p>
+        </div>
+        <div class="changelog-entry">
+            <div class="ch-header">
+                <span class="ch-badge feature">Feature</span>
+                <h4>Scheduled Tasks via Cron (<code>watcher.sh</code>)</h4>
+            </div>
+            <p>Tasks in <code>pending/</code> or <code>done/</code> with a <code>schedule:</code> frontmatter field (5-field cron expression) are evaluated every 60 seconds. When the expression matches the current time, a copy of the task is moved to <code>queue/</code> for execution. De-duplication prevents re-triggering within the same minute. Last-run timestamps are stored in <code>state/.schedules/&lt;task&gt;.last_run</code>.</p>
+        </div>
+        <div class="changelog-entry">
+            <div class="ch-header">
+                <span class="ch-badge feature">Feature</span>
+                <h4>Orphan Detection &amp; Stale Sweep (<code>watcher.sh</code>)</h4>
+            </div>
+            <p><strong>Orphan detection</strong> runs at watcher startup: scans <code>active/</code> for tasks whose lock-file PID is no longer running (power loss, SIGKILL, OOM). Marks them <code>resumable: true</code> and moves to <code>failed/</code>. <strong>Stale sweep</strong> runs every 60 seconds: re-checks all <code>active/</code> tasks for dead PIDs and moves them out. Tasks without lock files or with a stale start timestamp (&gt; 2 minutes) are also collected.</p>
+        </div>
+        <div class="changelog-entry">
+            <div class="ch-header">
+                <span class="ch-badge feature">Feature</span>
+                <h4>Session Checkpointing &amp; Auto-Resume (<code>dispatcher.sh</code>)</h4>
+            </div>
+            <p>On each task execution, the dispatcher saves a <code>state/&lt;task&gt;/current.json</code> with the Claude session UUID, attempt number, budget used so far, and git snapshot. On timeout (configurable <code>auto_requeue_on_timeout</code>), the task is automatically re-queued with <code>resume_session</code> injected into its frontmatter. Budget remaining is computed from the original budget minus all previous attempt costs. After <code>max_attempts</code> (default: 5), the task is marked non-resumable.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Mermaid.js -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'dark',
+        themeVariables: {
+            primaryColor: '#21262d',
+            primaryTextColor: '#e6edf3',
+            primaryBorderColor: '#30363d',
+            lineColor: '#58a6ff',
+            secondaryColor: '#161b22',
+            tertiaryColor: '#0d1117',
+            noteTextColor: '#e6edf3',
+            noteBkgColor: '#21262d',
+            noteBorderColor: '#30363d'
+        },
+        flowchart: {
+            curve: 'basis',
+            padding: 15
+        }
+    });
+
+    // Intersection Observer for fade-in
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+            }
+        });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    // Tab switching
+    function switchTab(event, tabId) {
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        event.target.classList.add('active');
+        document.getElementById(tabId).classList.add('active');
+    }
+
+    // Demo terminal
+    const demos = {
+        'smart-add': {
+            command: 'pipeline add "fix the auth timeout bug in skykeep, users logged out after 5 mins"',
+            output: `&#9889; Generating task...
+&#10003; Task created: 007-fix-auth-timeout-bug-users-logging-out-after-5-min.md
+  -> Queued for auto-pickup
+  type= code  repo= skykeep  model= sonnet`
+        },
+        'research': {
+            command: 'pipeline add "compare redis vs memcached for session caching"',
+            output: `&#9889; Generating task...
+&#10003; Task created: 008-compare-redis-vs-memcached-for-session-caching.md
+  -> Queued for auto-pickup
+  type= research  repo=&mdash;  model= sonnet`
+        },
+        'status': {
+            command: 'pipeline status',
+            output: `&#9556;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9559;
+&#9553;       Claude Pipeline Status         &#9553;
+&#9562;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9565;
+
+  Watcher: &#9679; running (PID 19223)
+
+  Queue:   0 task(s) waiting
+  Active:  1 task(s) running
+  Pending: 0 task(s) awaiting kickoff
+  Done:    3 task(s) completed
+  Failed:  1 task(s) failed
+
+  Currently running:
+    &#9654; 007-fix-auth-timeout: Fix Auth Session Timeout Bug
+
+  Resumable (1):
+    &#8634; 004-checkpoint-test  (orphaned)
+    -> Run 'pipeline resume <name>' to continue`
+        },
+        'resume': {
+            command: 'pipeline resume 004-checkpoint-test',
+            output: `&#10003; Resuming with session e2c583d0... (will be attempt 3)
+&#10003; Task re-queued for resumption: 004-checkpoint-test.md
+  -> Dispatcher triggered`
+        },
+        'state': {
+            command: 'pipeline state 004-checkpoint-test',
+            output: `&#9556;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9559;
+&#9553;      Task Checkpoint State           &#9553;
+&#9562;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9565;
+
+  Task:      004-checkpoint-test
+  Status:    interrupted
+  Session:   e2c583d0-cff9-40ac-bcd6-9854f3dfdea8
+  Attempt:   2
+  Budget:    $0.09 used
+  Resumable: true
+  Failure:   orphaned
+
+  Attempt History:
+    #1 &#10007;  mode=fresh   exit=124  25s  2026-05-22T05:03:54Z
+    #2 &#10007;  mode=resume  exit=124  25s  2026-05-22T05:04:37Z
+
+  Last Git Snapshot:
+    === Branch ===
+    fix/auth-timeout-30mins
+    === Recent Commits (last 5) ===
+    629d990 fix: extend auth session timeout`
+        },
+        'preview': {
+            command: 'pipeline add "add dark mode to pic-preview" --preview',
+            output: `&#9889; Generating task...
+
+&#9473;&#9473;&#9473; Generated Task &#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;
+---
+type: code
+repo: pic-preview
+priority: 6
+auto: true
+model: sonnet
+timeout: 900
+budget: 5.00
+branch: feat/dark-mode
+---
+
+# Add dark mode support to pic-preview
+
+Implement a dark mode theme for the pic-preview app...
+
+## Acceptance Criteria
+- Dark mode toggle is accessible and functional
+- All UI components have appropriate dark styling
+- Theme preference persists across sessions
+&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;&#9473;
+
+Queue this task? [Y/n/e(dit)] _`
+        }
+    };
+
+    function runDemo(name) {
+        const terminal = document.getElementById('terminal');
+        const demo = demos[name];
+        terminal.innerHTML = `<div><span class="prompt">~ $</span> <span class="command">${demo.command}</span></div>
+<div class="output">${demo.output}</div>
+<div><span class="prompt">~ $</span> <span class="cursor"></span></div>`;
+        terminal.scrollTop = terminal.scrollHeight;
+    }
+</script>
+
+</body>
+</html>

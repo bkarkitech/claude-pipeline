@@ -1,0 +1,63 @@
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Runtime state — don't commit transient data
+locks/*.pid
+locks/*.lock
+active/*.md
+queue/*.md
+
+# Logs — keep structure but not content
+logs/*.log
+
+# Task state — exclude personal task data
+state/*/stream-output.jsonl
+
+# Keep these structural dirs
+!locks/.gitkeep
+!active/.gitkeep
+!queue/.gitkeep
+!logs/.gitkeep
+
+# Dashboard generated status
+dashboard/status.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Credentials (never commit)
+*.env
+.env*
+
+# Compiled
+bin/__pycache__/
+
+# PID files
+locks/dashboard.pid
+locks/watcher.pid
+locks/telegram-bot.pid
+
+# Done/failed task files (personal data)
+done/*.md
+failed/*.md
+state/
+
+# Telegram offset
+state/.telegram_offset
+.DS_Store
+config.yml

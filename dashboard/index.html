@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Pipeline — Control Panel</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-2: #21262d;
+            --surface-3: #2d333b;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-dim: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --purple: #bc8cff;
+            --orange: #f0883e;
+            --cyan: #39d353;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ─── Header ──────────────────────────────────────────── */
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: var(--accent);
+            white-space: nowrap;
+        }
+
+        .services {
+            display: flex;
+            gap: 1rem;
+            margin-left: auto;
+        }
+
+        .service-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .service-indicator:hover { background: var(--surface-2); }
+
+        .service-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--red);
+        }
+
+        .service-dot.active {
+            background: var(--green);
+            box-shadow: 0 0 6px var(--green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .refresh-time {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        /* ─── Stat Cards ──────────────────────────────────────── */
+        .stats-bar {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            flex-wrap: wrap;
+        }
+
+        .stat-card {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 90px;
+        }
+
+        .stat-card:hover { border-color: var(--accent); }
+        .stat-card.selected { border-color: var(--accent); background: rgba(88, 166, 255, 0.1); }
+
+        .stat-card .count {
+            font-size: 1.4rem;
+            font-weight: 700;
+        }
+
+        .stat-card .label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .stat-card.active-card .count { color: var(--yellow); }
+        .stat-card.queue-card .count { color: var(--accent); }
+        .stat-card.pending-card .count { color: var(--purple); }
+        .stat-card.done-card .count { color: var(--green); }
+        .stat-card.failed-card .count { color: var(--red); }
+        .stat-card.cost-card .count { color: var(--orange); font-size: 1.1rem; }
+
+        /* ─── Toolbar ─────────────────────────────────────────── */
+        .toolbar {
+            display: flex;
+            gap: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            color: var(--text);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .btn:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .btn-primary:hover { background: #4c9aed; }
+        .btn-danger { color: var(--red); }
+        .btn-danger:hover { border-color: var(--red); background: rgba(248, 81, 73, 0.1); }
+        .btn-success { color: var(--green); }
+        .btn-success:hover { border-color: var(--green); }
+
+        .search-input {
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            color: var(--text);
+            font-size: 0.8rem;
+            width: 200px;
+            margin-left: auto;
+        }
+
+        .search-input::placeholder { color: var(--text-dim); }
+        .search-input:focus { outline: none; border-color: var(--accent); }
+
+        /* ─── Main Layout ─────────────────────────────────────── */
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ─── Task List (Left Panel) ─────────────────────────── */
+        .task-list-panel {
+            width: 380px;
+            min-width: 300px;
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .task-item {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.7rem 1rem;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .task-item:hover { background: var(--surface-2); }
+        .task-item.selected { background: var(--surface-2); border-left: 3px solid var(--accent); }
+
+        .task-status-icon {
+            font-size: 1rem;
+            flex-shrink: 0;
+            width: 20px;
+            text-align: center;
+        }
+
+        .task-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .task-name {
+            font-size: 0.82rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .task-meta {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            margin-top: 0.15rem;
+        }
+
+        .task-type-badge {
+            font-size: 0.65rem;
+            padding: 0.1rem 0.4rem;
+            border-radius: 3px;
+            background: var(--surface-3);
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .task-type-badge.code { color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+        .task-type-badge.research { color: var(--purple); border: 1px solid rgba(188,140,255,0.3); }
+
+        .task-cost {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+        }
+
+        .task-actions-btn {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 0.2rem;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .task-actions-btn:hover { background: var(--surface-3); color: var(--text); }
+
+        /* ─── Detail Panel (Right) ────────────────────────────── */
+        .detail-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .detail-empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        .detail-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .detail-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            flex: 1;
+        }
+
+        .detail-tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            padding: 0 1.5rem;
+        }
+
+        .detail-tab {
+            padding: 0.6rem 1rem;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .detail-tab:hover { color: var(--text); }
+        .detail-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        .detail-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+        }
+
+        .detail-actions {
+            padding: 0.75rem 1.5rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* ─── Live Stream ─────────────────────────────────────── */
+        .stream-container {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.78rem;
+            line-height: 1.8;
+        }
+
+        .stream-event {
+            padding: 0.2rem 0;
+        }
+
+        .stream-text {
+            color: var(--text);
+            padding: 0.3rem 0;
+        }
+
+        .stream-text .label { color: var(--cyan); font-weight: 600; }
+
+        .stream-tool {
+            color: var(--text-dim);
+            display: flex;
+            align-items: baseline;
+            gap: 0.4rem;
+        }
+
+        .stream-tool .tool-name { color: var(--yellow); font-weight: 500; }
+        .stream-tool .tool-detail { color: var(--text-dim); font-size: 0.73rem; }
+
+        .stream-result {
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            background: var(--surface-2);
+            border-radius: 6px;
+            border-left: 3px solid var(--green);
+        }
+
+        .stream-result.error { border-left-color: var(--red); }
+
+        .stream-stats {
+            display: flex;
+            gap: 1rem;
+            padding: 0.5rem 0;
+            color: var(--text-dim);
+            font-size: 0.75rem;
+            border-top: 1px solid var(--border);
+            margin-top: 0.5rem;
+        }
+
+        /* ─── Task Info Display ────────────────────────────────── */
+        .info-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.4rem 1rem;
+            font-size: 0.82rem;
+        }
+
+        .info-grid .label { color: var(--text-dim); }
+        .info-grid .value { color: var(--text); }
+
+        .task-body-content {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--surface-2);
+            border-radius: 8px;
+            font-size: 0.82rem;
+            white-space: pre-wrap;
+            font-family: 'SF Mono', monospace;
+        }
+
+        .log-content {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.75rem;
+            white-space: pre-wrap;
+            line-height: 1.6;
+            color: var(--text-dim);
+        }
+
+        /* ─── Modal ───────────────────────────────────────────── */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.visible { display: flex; }
+
+        .modal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            width: 500px;
+            max-width: 90vw;
+        }
+
+        .modal h2 {
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-bottom: 0.3rem;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            color: var(--text);
+            font-size: 0.85rem;
+            font-family: inherit;
+        }
+
+        .form-group textarea { min-height: 100px; resize: vertical; }
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus { outline: none; border-color: var(--accent); }
+
+        .form-row {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .form-row .form-group { flex: 1; }
+
+        .modal-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+
+        /* ─── Context Menu ────────────────────────────────────── */
+        .context-menu {
+            display: none;
+            position: fixed;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.3rem;
+            z-index: 2000;
+            min-width: 150px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+
+        .context-menu.visible { display: block; }
+
+        .context-menu-item {
+            padding: 0.5rem 0.8rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .context-menu-item:hover { background: var(--surface-2); }
+        .context-menu-item.danger { color: var(--red); }
+        .context-menu-sep { height: 1px; background: var(--border); margin: 0.3rem 0; }
+
+        /* ─── Responsive ──────────────────────────────────────── */
+        @media (max-width: 900px) {
+            .task-list-panel { width: 100%; border-right: none; }
+            .detail-panel { display: none; }
+            .main-content { flex-direction: column; }
+            .stats-bar { overflow-x: auto; flex-wrap: nowrap; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="logo">⚡ Claude Pipeline</div>
+        <div class="services">
+            <div class="service-indicator" onclick="toggleService('watcher')" title="Click to start/stop">
+                <span class="service-dot" id="svc-watcher"></span>
+                <span>Watcher</span>
+            </div>
+            <div class="service-indicator" onclick="toggleService('telegram')" title="Click to start/stop">
+                <span class="service-dot" id="svc-telegram"></span>
+                <span>Telegram</span>
+            </div>
+        </div>
+        <span class="refresh-time" id="refresh-time">—</span>
+    </header>
+
+    <!-- Stat Cards -->
+    <div class="stats-bar">
+        <div class="stat-card active-card" onclick="filterBy('active')">
+            <div><div class="count" id="count-active">0</div><div class="label">Active</div></div>
+        </div>
+        <div class="stat-card queue-card" onclick="filterBy('queue')">
+            <div><div class="count" id="count-queue">0</div><div class="label">Queue</div></div>
+        </div>
+        <div class="stat-card pending-card" onclick="filterBy('pending')">
+            <div><div class="count" id="count-pending">0</div><div class="label">Pending</div></div>
+        </div>
+        <div class="stat-card done-card" onclick="filterBy('done')">
+            <div><div class="count" id="count-done">0</div><div class="label">Done</div></div>
+        </div>
+        <div class="stat-card failed-card" onclick="filterBy('failed')">
+            <div><div class="count" id="count-failed">0</div><div class="label">Failed</div></div>
+        </div>
+        <div class="stat-card cost-card" onclick="filterBy(null)">
+            <div><div class="count" id="count-cost">$0</div><div class="label">Today</div></div>
+        </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+        <button class="btn btn-primary" onclick="showNewTaskModal()">+ New Task</button>
+        <button class="btn" onclick="dispatch()">▶ Dispatch</button>
+        <button class="btn" onclick="filterBy(null)">All</button>
+        <input type="text" class="search-input" placeholder="Search tasks..." oninput="searchTasks(this.value)" id="search-input">
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Task List -->
+        <div class="task-list-panel" id="task-list"></div>
+
+        <!-- Detail Panel -->
+        <div class="detail-panel" id="detail-panel">
+            <div class="detail-empty">Select a task to view details</div>
+        </div>
+    </div>
+
+    <!-- New Task Modal -->
+    <div class="modal-overlay" id="new-task-modal">
+        <div class="modal">
+            <h2>Create New Task</h2>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="new-desc" placeholder="Describe what you want Claude to do..."></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="new-type">
+                        <option value="general">General</option>
+                        <option value="code">Code</option>
+                        <option value="research">Research</option>
+                        <option value="review">Review</option>
+                        <option value="writing">Writing</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Priority (1-10)</label>
+                    <input type="number" id="new-priority" value="5" min="1" max="10">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Repository</label>
+                    <select id="new-repo"><option value="">None (home dir)</option></select>
+                </div>
+                <div class="form-group">
+                    <label>Model</label>
+                    <select id="new-model">
+                        <option value="sonnet">Sonnet</option>
+                        <option value="opus">Opus</option>
+                        <option value="haiku">Haiku</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Budget ($)</label>
+                    <input type="number" id="new-budget" value="5.00" min="0.5" step="0.5">
+                </div>
+                <div class="form-group">
+                    <label>Timeout (seconds)</label>
+                    <input type="number" id="new-timeout" value="600" min="60" step="60">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="hideNewTaskModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createTask()">Create Task</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="context-menu"></div>
+
+    <script>
+    // ─── State ───────────────────────────────────────────────────────────────
+    const state = {
+        tasks: [],
+        selectedTask: null,
+        filter: null,
+        search: '',
+        activeTab: 'live',
+        eventSource: null,
+        config: { repos: {}, defaults: {} },
+    };
+
+    const STATUS_ICONS = {
+        active: '⚡', queue: '📋', pending: '⏸', done: '✅', failed: '❌'
+    };
+
+    const TOOL_ICONS = {
+        Bash: '⚙️', Read: '📄', Write: '✏️', Edit: '✏️', Glob: '🔍',
+        Grep: '🔍', Agent: '🤖', WebSearch: '🌐', WebFetch: '🌐',
+        TaskCreate: '📋', TaskUpdate: '📋',
+    };
+
+    // ─── API Helpers ─────────────────────────────────────────────────────────
+    async function api(path, method = 'GET', body = null) {
+        const opts = { method, headers: {} };
+        if (body) {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }
+        const res = await fetch(`/api${path}`, opts);
+        return res.json();
+    }
+
+    // ─── Data Fetching ───────────────────────────────────────────────────────
+    async function fetchStatus() {
+        try {
+            const data = await api('/status');
+            // Update counts
+            document.getElementById('count-active').textContent = data.counts?.active || 0;
+            document.getElementById('count-queue').textContent = data.counts?.queue || 0;
+            document.getElementById('count-pending').textContent = data.counts?.pending || 0;
+            document.getElementById('count-done').textContent = data.counts?.done || 0;
+            document.getElementById('count-failed').textContent = data.counts?.failed || 0;
+            document.getElementById('count-cost').textContent = `$${(data.costs?.today_usd || 0).toFixed(2)}`;
+
+            // Update services
+            const watcher = data.services?.watcher;
+            const telegram = data.services?.telegram_bot;
+            document.getElementById('svc-watcher').className = `service-dot ${watcher?.running ? 'active' : ''}`;
+            document.getElementById('svc-telegram').className = `service-dot ${telegram?.running ? 'active' : ''}`;
+
+            // Update refresh time
+            document.getElementById('refresh-time').textContent = new Date().toLocaleTimeString();
+        } catch (e) {
+            console.error('Status fetch failed:', e);
+        }
+    }
+
+    async function fetchTasks() {
+        try {
+            const data = await api('/tasks');
+            state.tasks = data.tasks || [];
+            renderTaskList();
+        } catch (e) {
+            console.error('Tasks fetch failed:', e);
+        }
+    }
+
+    async function fetchConfig() {
+        try {
+            state.config = await api('/config');
+            // Populate repo dropdown
+            const select = document.getElementById('new-repo');
+            select.innerHTML = '<option value="">None (home dir)</option>';
+            for (const [name, path] of Object.entries(state.config.repos || {})) {
+                select.innerHTML += `<option value="${name}">${name}</option>`;
+            }
+        } catch (e) {}
+    }
+
+    // ─── Rendering ───────────────────────────────────────────────────────────
+    function renderTaskList() {
+        const list = document.getElementById('task-list');
+        let tasks = state.tasks;
+
+        // Apply filter
+        if (state.filter) {
+            tasks = tasks.filter(t => t.status === state.filter);
+        }
+
+        // Apply search
+        if (state.search) {
+            const q = state.search.toLowerCase();
+            tasks = tasks.filter(t =>
+                t.name.toLowerCase().includes(q) ||
+                t.title.toLowerCase().includes(q) ||
+                t.type.toLowerCase().includes(q)
+            );
+        }
+
+        // Update stat card selection
+        document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('selected'));
+        if (state.filter) {
+            const card = document.querySelector(`.stat-card.${state.filter}-card`);
+            if (card) card.classList.add('selected');
+        }
+
+        if (tasks.length === 0) {
+            list.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-dim)">
+                ${state.filter ? `No ${state.filter} tasks` : 'No tasks found'}</div>`;
+            return;
+        }
+
+        list.innerHTML = tasks.map(t => {
+            const icon = STATUS_ICONS[t.status] || '•';
+            const isSelected = state.selectedTask === t.name;
+            const elapsed = t.elapsed_s ? formatDuration(t.elapsed_s) : '';
+            const cost = t.budget_used ? `$${t.budget_used.toFixed(2)}` : '';
+            const meta = elapsed || cost || '';
+
+            return `<div class="task-item ${isSelected ? 'selected' : ''}"
+                         onclick="selectTask('${t.name}')"
+                         oncontextmenu="showContextMenu(event, '${t.name}', '${t.status}')">
+                <span class="task-status-icon">${icon}</span>
+                <div class="task-info">
+                    <div class="task-name">${t.title || t.name}</div>
+                    <div class="task-meta">
+                        <span class="task-type-badge ${t.type}">${t.type}</span>
+                        ${meta ? `<span class="task-cost">${meta}</span>` : ''}
+                        ${t.source === 'telegram' ? '<span class="task-cost">📱</span>' : ''}
+                    </div>
+                </div>
+                <button class="task-actions-btn" onclick="event.stopPropagation(); showContextMenu(event, '${t.name}', '${t.status}')">⋮</button>
+            </div>`;
+        }).join('');
+    }
+
+    function renderDetail(task, viewData, stateData) {
+        const panel = document.getElementById('detail-panel');
+        const isActive = task.status === 'active';
+        const defaultTab = isActive ? 'live' : 'info';
+        if (!state.activeTab || (isActive && state.activeTab === 'info')) {
+            state.activeTab = defaultTab;
+        }
+
+        panel.innerHTML = `
+            <div class="detail-header">
+                <span class="task-status-icon" style="font-size:1.3rem">${STATUS_ICONS[task.status]}</span>
+                <div class="detail-title">${task.title || task.name}</div>
+                <span class="task-type-badge ${task.type}" style="font-size:0.75rem;padding:0.2rem 0.6rem">${task.type}</span>
+            </div>
+            <div class="detail-tabs">
+                ${isActive ? `<div class="detail-tab ${state.activeTab === 'live' ? 'active' : ''}" onclick="switchTab('live')">Live</div>` : ''}
+                <div class="detail-tab ${state.activeTab === 'info' ? 'active' : ''}" onclick="switchTab('info')">Info</div>
+                <div class="detail-tab ${state.activeTab === 'logs' ? 'active' : ''}" onclick="switchTab('logs')">Logs</div>
+                <div class="detail-tab ${state.activeTab === 'state' ? 'active' : ''}" onclick="switchTab('state')">State</div>
+            </div>
+            <div class="detail-body" id="detail-body"></div>
+            <div class="detail-actions">
+                ${renderActions(task)}
+            </div>`;
+
+        renderTabContent(task, viewData, stateData);
+
+        // Start SSE if live tab and active
+        if (state.activeTab === 'live' && isActive) {
+            startStream(task.name);
+        }
+    }
+
+    function renderActions(task) {
+        const actions = [];
+        switch (task.status) {
+            case 'active':
+                actions.push(`<button class="btn btn-danger" onclick="taskAction('${task.name}', 'stop')">⏹ Stop</button>`);
+                break;
+            case 'pending':
+                actions.push(`<button class="btn btn-success" onclick="taskAction('${task.name}', 'run')">▶ Run</button>`);
+                actions.push(`<button class="btn btn-danger" onclick="taskAction('${task.name}', 'delete')">🗑 Delete</button>`);
+                break;
+            case 'queue':
+                actions.push(`<button class="btn btn-danger" onclick="taskAction('${task.name}', 'delete')">🗑 Delete</button>`);
+                break;
+            case 'failed':
+                if (task.resumable) {
+                    actions.push(`<button class="btn btn-success" onclick="taskAction('${task.name}', 'resume')">↺ Resume</button>`);
+                }
+                actions.push(`<button class="btn" onclick="taskAction('${task.name}', 'retry')">🔄 Retry</button>`);
+                actions.push(`<button class="btn btn-danger" onclick="taskAction('${task.name}', 'delete')">🗑 Delete</button>`);
+                break;
+            case 'done':
+                actions.push(`<button class="btn btn-danger" onclick="taskAction('${task.name}', 'delete')">🗑 Delete</button>`);
+                break;
+        }
+        return actions.join('');
+    }
+
+    function renderTabContent(task, viewData, stateData) {
+        const body = document.getElementById('detail-body');
+        if (!body) return;
+
+        if (state.activeTab === 'live') {
+            body.innerHTML = `<div class="stream-container" id="stream-output">
+                <div style="color:var(--text-dim)">Connecting to live stream...</div>
+            </div>`;
+        } else if (state.activeTab === 'info') {
+            const fm = viewData?.frontmatter || {};
+            const taskBody = viewData?.body || '';
+            body.innerHTML = `
+                <div class="info-grid">
+                    <span class="label">Status</span><span class="value">${task.status}</span>
+                    <span class="label">Type</span><span class="value">${task.type}</span>
+                    <span class="label">Priority</span><span class="value">${task.priority}</span>
+                    <span class="label">Model</span><span class="value">${task.model || 'sonnet'}</span>
+                    <span class="label">Repo</span><span class="value">${task.repo || '(home)'}</span>
+                    <span class="label">Source</span><span class="value">${task.source || 'cli'}</span>
+                    ${task.budget_used ? `<span class="label">Cost</span><span class="value">$${task.budget_used.toFixed(4)}</span>` : ''}
+                    ${task.elapsed_s ? `<span class="label">Elapsed</span><span class="value">${formatDuration(task.elapsed_s)}</span>` : ''}
+                    ${task.session_id ? `<span class="label">Session</span><span class="value" style="font-family:monospace;font-size:0.75rem">${task.session_id.slice(0,8)}...</span>` : ''}
+                    ${task.attempt > 1 ? `<span class="label">Attempt</span><span class="value">${task.attempt}</span>` : ''}
+                    ${task.failure_reason ? `<span class="label">Failure</span><span class="value" style="color:var(--red)">${task.failure_reason}</span>` : ''}
+                </div>
+                ${taskBody ? `<div class="task-body-content">${escapeHtml(taskBody)}</div>` : ''}`;
+        } else if (state.activeTab === 'logs') {
+            body.innerHTML = '<div style="color:var(--text-dim)">Loading logs...</div>';
+            api(`/tasks/${task.name}/logs`).then(data => {
+                body.innerHTML = data.log
+                    ? `<pre class="log-content">${escapeHtml(data.log)}</pre>`
+                    : '<div style="color:var(--text-dim)">No logs available</div>';
+            });
+        } else if (state.activeTab === 'state') {
+            if (stateData && Object.keys(stateData).length) {
+                body.innerHTML = `<pre class="log-content">${escapeHtml(JSON.stringify(stateData, null, 2))}</pre>`;
+            } else {
+                body.innerHTML = '<div style="color:var(--text-dim)">No state data</div>';
+            }
+        }
+    }
+
+    // ─── Live Stream (SSE) ───────────────────────────────────────────────────
+    function startStream(name) {
+        stopStream();
+        const container = document.getElementById('stream-output');
+        if (!container) return;
+        container.innerHTML = '';
+
+        state.eventSource = new EventSource(`/api/tasks/${name}/stream`);
+
+        state.eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                renderStreamEvent(container, data);
+                container.scrollTop = container.scrollHeight;
+            } catch (e) {}
+        };
+
+        state.eventSource.addEventListener('done', () => {
+            stopStream();
+            container.innerHTML += `<div class="stream-stats">Stream ended — task completed</div>`;
+        });
+
+        state.eventSource.onerror = () => {
+            stopStream();
+        };
+    }
+
+    function stopStream() {
+        if (state.eventSource) {
+            state.eventSource.close();
+            state.eventSource = null;
+        }
+    }
+
+    function renderStreamEvent(container, event) {
+        if (event.type === 'system' && event.subtype === 'init') {
+            container.innerHTML += `<div class="stream-event" style="color:var(--text-dim)">
+                Session started — model: ${event.model || 'unknown'}
+            </div>`;
+        } else if (event.type === 'assistant') {
+            const content = event.message?.content || [];
+            for (const block of content) {
+                if (block.type === 'text' && block.text?.trim()) {
+                    container.innerHTML += `<div class="stream-event stream-text">
+                        <span class="label">🤖 Claude:</span> ${escapeHtml(block.text.slice(0, 500))}
+                    </div>`;
+                } else if (block.type === 'tool_use') {
+                    const icon = TOOL_ICONS[block.name] || '🔧';
+                    const detail = getToolDetail(block);
+                    container.innerHTML += `<div class="stream-event stream-tool">
+                        <span>${icon}</span>
+                        <span class="tool-name">${block.name}</span>
+                        <span class="tool-detail">${escapeHtml(detail)}</span>
+                    </div>`;
+                }
+            }
+        } else if (event.type === 'result') {
+            const cost = event.total_cost_usd ? `$${event.total_cost_usd.toFixed(4)}` : '';
+            const duration = event.duration_ms ? formatDuration(event.duration_ms / 1000) : '';
+            const success = event.stop_reason === 'end_turn';
+            container.innerHTML += `<div class="stream-result ${success ? '' : 'error'}">
+                <strong>${success ? '✅' : '⚠️'} Finished</strong> — ${duration} | ${cost} | ${event.num_turns || 0} turns
+            </div>`;
+        }
+    }
+
+    function getToolDetail(block) {
+        const input = block.input || {};
+        switch (block.name) {
+            case 'Bash': return truncate(input.command || '', 80);
+            case 'Read': case 'Write': case 'Edit':
+                return (input.file_path || '').replace(/^\/Users\/[^/]+/, '~');
+            case 'Glob': case 'Grep': return truncate(input.pattern || input.query || '', 60);
+            case 'Agent': return input.description || '';
+            case 'WebSearch': return `"${input.query || ''}"`;
+            default: return '';
+        }
+    }
+
+    // ─── Actions ─────────────────────────────────────────────────────────────
+    async function selectTask(name) {
+        state.selectedTask = name;
+        stopStream();
+        renderTaskList();
+
+        const task = state.tasks.find(t => t.name === name);
+        if (!task) return;
+
+        // Fetch detail data
+        const [viewData, stateData] = await Promise.all([
+            api(`/tasks/${name}/view`).catch(() => null),
+            api(`/tasks/${name}/state`).catch(() => null),
+        ]);
+
+        renderDetail(task, viewData, stateData);
+    }
+
+    function switchTab(tab) {
+        state.activeTab = tab;
+        const task = state.tasks.find(t => t.name === state.selectedTask);
+        if (task) selectTask(task.name);
+    }
+
+    async function taskAction(name, action) {
+        if (action === 'delete' && !confirm(`Delete task "${name}"?`)) return;
+        if (action === 'stop' && !confirm(`Stop running task "${name}"?`)) return;
+
+        const result = await api(`/tasks/${name}/${action}`, 'POST');
+        if (result.error) {
+            alert(result.error);
+        } else {
+            await refresh();
+            if (action === 'delete') {
+                state.selectedTask = null;
+                document.getElementById('detail-panel').innerHTML = '<div class="detail-empty">Select a task to view details</div>';
+            }
+        }
+    }
+
+    async function dispatch() {
+        await api('/dispatch', 'POST');
+        setTimeout(refresh, 1000);
+    }
+
+    async function toggleService(name) {
+        const dot = document.getElementById(`svc-${name}`);
+        const isRunning = dot.classList.contains('active');
+        const action = isRunning ? 'stop' : 'start';
+        await api(`/services/${name}`, 'POST', { action });
+        setTimeout(fetchStatus, 1000);
+    }
+
+    function filterBy(status) {
+        state.filter = status;
+        renderTaskList();
+    }
+
+    function searchTasks(query) {
+        state.search = query;
+        renderTaskList();
+    }
+
+    // ─── New Task Modal ──────────────────────────────────────────────────────
+    function showNewTaskModal() {
+        document.getElementById('new-task-modal').classList.add('visible');
+        document.getElementById('new-desc').focus();
+    }
+
+    function hideNewTaskModal() {
+        document.getElementById('new-task-modal').classList.remove('visible');
+    }
+
+    async function createTask() {
+        const desc = document.getElementById('new-desc').value.trim();
+        if (!desc) { alert('Please enter a description'); return; }
+
+        const data = {
+            description: desc,
+            type: document.getElementById('new-type').value,
+            priority: parseInt(document.getElementById('new-priority').value),
+            repo: document.getElementById('new-repo').value,
+            model: document.getElementById('new-model').value,
+            budget: parseFloat(document.getElementById('new-budget').value),
+            timeout: parseInt(document.getElementById('new-timeout').value),
+            auto: true,
+        };
+
+        const result = await api('/tasks/create', 'POST', data);
+        if (result.error) {
+            alert(result.error);
+        } else {
+            hideNewTaskModal();
+            document.getElementById('new-desc').value = '';
+            await refresh();
+        }
+    }
+
+    // ─── Context Menu ────────────────────────────────────────────────────────
+    function showContextMenu(event, name, status) {
+        event.preventDefault();
+        event.stopPropagation();
+        const menu = document.getElementById('context-menu');
+        let items = [];
+
+        if (status === 'pending') items.push({ label: '▶ Run', action: () => taskAction(name, 'run') });
+        if (status === 'active') items.push({ label: '⏹ Stop', action: () => taskAction(name, 'stop'), danger: true });
+        if (status === 'failed') {
+            items.push({ label: '↺ Resume', action: () => taskAction(name, 'resume') });
+            items.push({ label: '🔄 Retry', action: () => taskAction(name, 'retry') });
+        }
+        if (status !== 'active') {
+            if (items.length) items.push({ sep: true });
+            items.push({ label: '📋 Move to Queue', action: () => taskAction(name, 'move') });
+            items.push({ label: '🗑 Delete', action: () => taskAction(name, 'delete'), danger: true });
+        }
+
+        menu.innerHTML = items.map(item => {
+            if (item.sep) return '<div class="context-menu-sep"></div>';
+            return `<div class="context-menu-item ${item.danger ? 'danger' : ''}"
+                         onclick="this._action()">${item.label}</div>`;
+        }).join('');
+
+        // Attach actions
+        const menuItems = menu.querySelectorAll('.context-menu-item');
+        let idx = 0;
+        items.forEach((item, i) => {
+            if (!item.sep) {
+                menuItems[idx]._action = () => { hideContextMenu(); item.action(); };
+                idx++;
+            }
+        });
+
+        menu.style.left = event.clientX + 'px';
+        menu.style.top = event.clientY + 'px';
+        menu.classList.add('visible');
+    }
+
+    function hideContextMenu() {
+        document.getElementById('context-menu').classList.remove('visible');
+    }
+
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            hideContextMenu();
+            hideNewTaskModal();
+        }
+    });
+
+    // ─── Utilities ───────────────────────────────────────────────────────────
+    function formatDuration(seconds) {
+        if (seconds < 60) return `${Math.round(seconds)}s`;
+        const m = Math.floor(seconds / 60);
+        const s = Math.round(seconds % 60);
+        if (m < 60) return `${m}m${s}s`;
+        const h = Math.floor(m / 60);
+        return `${h}h${m % 60}m`;
+    }
+
+    function truncate(text, max) {
+        if (text.length <= max) return text;
+        return text.slice(0, max - 3) + '...';
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // ─── Refresh Loop ────────────────────────────────────────────────────────
+    async function refresh() {
+        await Promise.all([fetchStatus(), fetchTasks()]);
+    }
+
+    // ─── Init ────────────────────────────────────────────────────────────────
+    (async () => {
+        await fetchConfig();
+        await refresh();
+        setInterval(refresh, 5000);
+    })();
+    </script>
+</body>
+</html>
